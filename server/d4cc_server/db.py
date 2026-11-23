@@ -96,6 +96,27 @@ MIGRATIONS: list[str] = [
     CREATE INDEX alerts_open ON alerts(resolved_at);
     CREATE INDEX alerts_session ON alerts(session_id);
     """,
+    # 3 - card interactions, runtime settings
+    """
+    ALTER TABLE sessions ADD COLUMN marker_note TEXT;
+    ALTER TABLE sessions ADD COLUMN marker_since REAL;
+
+    CREATE TABLE annotations (
+        id          INTEGER PRIMARY KEY,
+        session_id  TEXT REFERENCES sessions(id),
+        host_id     INTEGER REFERENCES hosts(id),
+        alert_id    INTEGER REFERENCES alerts(id),
+        kind        TEXT NOT NULL,   -- marker_set | marker_cleared | note | ack | ended | archived | unarchived
+        text        TEXT,
+        created_at  REAL NOT NULL
+    );
+    CREATE INDEX annotations_session ON annotations(session_id, created_at);
+
+    CREATE TABLE settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
 ]
 
 

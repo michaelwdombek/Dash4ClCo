@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, board, db
+from . import __version__, actions, board, db, settings
 from .config import Config
 from .health import Health, InvalidHeartbeat
 from .hub import Hub
@@ -24,12 +24,14 @@ from .ingest import Ingestor, InvalidEvent
 HERE = Path(__file__).parent
 COOKIE = "d4cc_session"
 MAX_BATCH = 100
+PRUNE_INTERVAL = 3600
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
     cfg = cfg or Config.from_env()
     cfg.validate()
     conn = db.connect(cfg.db_path)
+    settings.load(conn, cfg)
     ingestor = Ingestor(conn)
     health = Health(conn, cfg)
     hub = Hub()
@@ -40,12 +42,18 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             hub.publish("resync", None)
 
     async def health_loop():
+        last_prune = 0.0
         while True:
             await asyncio.sleep(cfg.health_interval)
             try:
                 check_health()
+                if time.time() - last_prune > PRUNE_INTERVAL:
+                    last_prune = time.time()
+                    counts = actions.prune(conn, cfg.retention, last_prune)
+                    if any(counts.values()):
+                        print(f"retention: pruned {counts}")
             except Exception as exc:  # keep the loop alive
-                print(f"health check failed: {exc!r}")
+                print(f"maintenance failed: {exc!r}")
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -159,6 +167,111 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    # -- card actions (admin, JSON bodies) -----------------------------------
+
+    async def json_body(request: Request) -> dict:
+        if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+            raise HTTPException(415, "expected application/json")
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(400, "invalid JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "expected an object")
+        return body
+
+    def run_action(fn, *args, sid: str | None = None):
+        now = time.time()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = fn(conn, *args, now)
+            conn.execute("COMMIT")
+        except actions.NotFound as exc:
+            conn.execute("ROLLBACK")
+            raise HTTPException(404, str(exc))
+        except actions.Conflict as exc:
+            conn.execute("ROLLBACK")
+            raise HTTPException(409, str(exc))
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        check_health()
+        if sid is None and result is not None and "session_id" in result.keys():
+            sid = result["session_id"]
+        if sid:
+            data = board.get_session(conn, sid)
+            if data:
+                hub.publish("session", data)
+        else:
+            hub.publish("resync", None)
+        return {"ok": True}
+
+    @app.post("/api/sessions/{sid}/marker", dependencies=[Depends(require_admin)])
+    async def marker_set(sid: str, request: Request):
+        body = await json_body(request)
+        return run_action(actions.set_marker, sid, body.get("note"), sid=sid)
+
+    @app.delete("/api/sessions/{sid}/marker", dependencies=[Depends(require_admin)])
+    def marker_clear(sid: str):
+        return run_action(actions.clear_marker, sid, sid=sid)
+
+    @app.post("/api/sessions/{sid}/notes", dependencies=[Depends(require_admin)])
+    async def note_add(sid: str, request: Request):
+        body = await json_body(request)
+        return run_action(actions.add_note, sid, body.get("text"), sid=sid)
+
+    @app.post("/api/sessions/{sid}/end", dependencies=[Depends(require_admin)])
+    async def session_end(sid: str, request: Request):
+        body = await json_body(request)
+        return run_action(actions.mark_ended, sid, body.get("note"), sid=sid)
+
+    @app.post("/api/sessions/{sid}/archive", dependencies=[Depends(require_admin)])
+    async def session_archive(sid: str, request: Request):
+        await json_body(request)
+        return run_action(actions.archive, sid)
+
+    @app.post("/api/sessions/{sid}/unarchive", dependencies=[Depends(require_admin)])
+    async def session_unarchive(sid: str, request: Request):
+        await json_body(request)
+        return run_action(actions.unarchive, sid)
+
+    @app.post("/api/alerts/{alert_id}/ack", dependencies=[Depends(require_admin)])
+    async def alert_ack(alert_id: int, request: Request):
+        body = await json_body(request)
+        return run_action(actions.ack_alert, alert_id, body.get("note"))
+
+    @app.get("/api/sessions/{sid}/history", dependencies=[Depends(require_admin)])
+    def session_history(sid: str):
+        try:
+            data = actions.history(conn, sid)
+        except actions.NotFound as exc:
+            raise HTTPException(404, str(exc))
+        data["session"] = board.get_session(conn, sid)
+        return data
+
+    @app.get("/api/archived", dependencies=[Depends(require_admin)])
+    def archived_sessions():
+        rows = conn.execute("SELECT * FROM sessions WHERE archived_at IS NOT NULL"
+                            " ORDER BY archived_at DESC LIMIT 200").fetchall()
+        return {"sessions": [board.session_dict(conn, r) for r in rows]}
+
+    # -- settings -------------------------------------------------------------
+
+    @app.get("/api/settings", dependencies=[Depends(require_admin)])
+    def settings_get():
+        return {"values": settings.current(cfg), "fields": settings.describe()}
+
+    @app.put("/api/settings", dependencies=[Depends(require_admin)])
+    async def settings_put(request: Request):
+        body = await json_body(request)
+        try:
+            settings.save(conn, cfg, body)
+        except settings.InvalidSetting as exc:
+            raise HTTPException(422, str(exc))
+        check_health()
+        hub.publish("resync", None)
+        return {"values": settings.current(cfg)}
+
     # -- UI -----------------------------------------------------------------
 
     @app.get("/login", response_class=HTMLResponse)
@@ -186,6 +299,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=303)
         return templates.TemplateResponse(
             request, "board.html", {"version": __version__, "auth": not cfg.auth_disabled}
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request):
+        if not is_admin(request):
+            return RedirectResponse("/login", status_code=303)
+        return templates.TemplateResponse(
+            request, "settings.html", {"version": __version__, "auth": not cfg.auth_disabled}
         )
 
     @app.get("/favicon.ico")

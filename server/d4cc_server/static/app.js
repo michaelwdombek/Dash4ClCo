@@ -123,13 +123,42 @@ function renderSubagents(s) {
 
 function renderAlerts(alerts, extra = []) {
   const items = [
-    ...alerts.map(a => ({ kind: a.kind, text: ALERT_TEXT[a.kind]
-      ? ALERT_TEXT[a.kind]({ since: a.kind === "stuck" ? a._since : a.opened_at }) : a.kind, acked: !!a.acked_at })),
+    ...alerts.map(a => ({ id: a.id, kind: a.kind, acked: !!a.acked_at, note: a.note,
+      text: ALERT_TEXT[a.kind] ? ALERT_TEXT[a.kind]({ since: a.kind === "stuck" ? a._since : a.opened_at }) : a.kind })),
     ...extra,
   ];
   if (!items.length) return null;
   return h("ul", { class: "alerts" }, items.map(i =>
-    h("li", { class: `alert alert-${i.kind}${i.acked ? " acked" : ""}` }, i.text)));
+    h("li", { class: `alert alert-${i.kind}${i.acked ? " acked" : ""}` },
+      h("span", { class: "alert-text" }, i.text,
+        i.acked ? h("span", { class: "alert-ack" }, i.note ? `acknowledged · ${i.note}` : "acknowledged") : null),
+      i.id && !i.acked ? h("button", { class: "mini", "data-action": "ack", "data-alert": i.id,
+        title: "Acknowledge this alert" }, "Ack") : null,
+    )));
+}
+
+function renderMarker(s) {
+  if (!s.marker_since) return null;
+  return h("div", { class: "marker", title: "You marked this session as being worked on" },
+    h("span", { class: "marker-label" }, "On it"),
+    s.marker_note ? h("span", { class: "marker-note" }, s.marker_note) : null,
+    h("span", { class: "marker-since" }, ago(s.marker_since)),
+  );
+}
+
+function renderActions(s, offline) {
+  const dead = (s.alerts || []).some(a => a.kind === "dead");
+  const btn = (action, label, title) => h("button", { class: "mini", "data-action": action, title }, label);
+  return h("div", { class: "card-actions" },
+    s.state !== "ended" ? (s.marker_since
+      ? btn("marker-clear", "Clear “on it”", "Remove the working-on-it marker")
+      : btn("marker", "On it", "Mark that you are working on this")) : null,
+    btn("note", "Note", "Add a note to the history"),
+    btn("history", "History", "Show the session timeline"),
+    s.state !== "ended" && (dead || offline)
+      ? btn("end", "Mark ended", "The session is gone: end the card manually") : null,
+    s.state === "ended" ? btn("archive", "Archive", "Hide this card (history is kept)") : null,
+  );
 }
 
 function renderCard(s) {
@@ -151,6 +180,7 @@ function renderCard(s) {
   const classes = ["card", `state-${s.state}`];
   if (alerts.length) classes.push("has-alert");
   if (offline) classes.push("host-offline");
+  if (s.marker_since) classes.push("marked");
   return h("article", { class: classes.join(" "), "data-id": s.id },
     h("div", { class: "card-head" },
       h("span", { class: "badge" }, STATE_LABEL[s.state] || s.state),
@@ -158,6 +188,7 @@ function renderCard(s) {
     ),
     h("h3", { class: "project", title: s.cwd || "" }, basename(s.cwd)),
     h("p", { class: "activity", title: detail }, detail),
+    renderMarker(s),
     renderAlerts(alerts, extra),
     renderSubagents(s),
     h("dl", { class: "meta" },
@@ -169,6 +200,7 @@ function renderCard(s) {
         : null,
       h("div", {}, h("dt", {}, "last event"), h("dd", {}, ago(s.last_event_at))),
     ),
+    renderActions(s, offline),
   );
 }
 
@@ -183,6 +215,10 @@ function renderHostHead(host, ref) {
     h("span", { class: `host-dot ${statusClass}`, "aria-hidden": "true" }),
     h("h2", {}, host.name),
     h("span", { class: "host-meta" }, status),
+    ...(host.alerts || []).filter(a => !a.acked_at).map(a =>
+      h("button", { class: "mini", "data-action": "ack", "data-alert": a.id, title: "Acknowledge offline alert" }, "Ack")),
+    ...(host.alerts || []).filter(a => a.acked_at).map(a =>
+      h("span", { class: "host-meta acked" }, a.note ? `acknowledged · ${a.note}` : "acknowledged")),
     host.claude_installed_version ? h("span", { class: "host-meta" }, `claude ${host.claude_installed_version}`,
       outdated ? h("span", { class: "flag flag-outdated", title: `Newest in fleet: ${ref}` }, `outdated · ${ref} available`) : null)
       : null,
@@ -194,17 +230,19 @@ function renderHostHead(host, ref) {
 function renderSummary(sessions) {
   const counts = { needs_you: 0, working: 0, idle: 0 };
   for (const s of sessions) if (s.state in counts) counts[s.state]++;
+  // Acknowledged alerts and sessions marked "on it" are handled: not counted in the title.
+  const unhandledNeedsYou = sessions.filter(s => s.state === "needs_you" && !s.marker_since).length;
   let alerts = 0;
-  for (const s of sessions) alerts += (s.alerts || []).length;
-  for (const host of state.hosts.values()) alerts += (host.alerts || []).length;
+  for (const s of sessions) if (!s.marker_since) alerts += (s.alerts || []).filter(a => !a.acked_at).length;
+  for (const host of state.hosts.values()) alerts += (host.alerts || []).filter(a => !a.acked_at).length;
   const el = document.getElementById("summary");
   el.replaceChildren(
     h("span", { class: "sum needs_you" }, `${counts.needs_you} need you`),
     h("span", { class: "sum working" }, `${counts.working} working`),
     h("span", { class: "sum idle" }, `${counts.idle} idle`),
-    alerts ? h("span", { class: "sum sum-alerts" }, `${alerts} alert${alerts > 1 ? "s" : ""}`) : null,
+    ...(alerts ? [h("span", { class: "sum sum-alerts" }, `${alerts} alert${alerts > 1 ? "s" : ""}`)] : []),
   );
-  const attention = counts.needs_you + alerts;
+  const attention = unhandledNeedsYou + alerts;
   document.title = attention ? `(${attention}) Dash4ClCo` : "Dash4ClCo";
 }
 
@@ -237,7 +275,8 @@ function render() {
   });
   board.replaceChildren(...groups.map(([hostId, list]) => {
     const host = state.hosts.get(hostId) || { id: hostId, name: `host #${hostId}`, alerts: [] };
-    list.sort((a, b) => (needsAttention(b) - needsAttention(a)) ||
+    const prio = s => needsAttention(s) ? (s.marker_since ? 1 : 2) : 0;
+    list.sort((a, b) => (prio(b) - prio(a)) ||
       (STATE_ORDER[a.state] - STATE_ORDER[b.state]) || (a.started_at - b.started_at));
     return h("section", { class: `host${hostOffline(host) ? " offline" : ""}` },
       renderHostHead(host, ref),
@@ -294,6 +333,160 @@ document.getElementById("show-ended").addEventListener("change", ev => {
   state.showEnded = ev.target.checked;
   render();
 });
+
+// --- actions ---------------------------------------------------------------
+
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method, credentials: "same-origin",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { location.href = "/login"; throw new Error("login required"); }
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch (_) { /* not JSON */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// Small promise-based text prompt in a <dialog>. Resolves to the text, or null on cancel.
+function askText({ title, label, placeholder = "", confirm = "Save", required = false }) {
+  const dlg = document.getElementById("ask");
+  dlg.querySelector("h2").textContent = title;
+  dlg.querySelector("label").textContent = label;
+  const input = dlg.querySelector("textarea");
+  input.value = "";
+  input.placeholder = placeholder;
+  input.required = required;
+  dlg.querySelector("button[value=ok]").textContent = confirm;
+  dlg.returnValue = "";
+  dlg.showModal();
+  input.focus();
+  return new Promise(resolve => {
+    dlg.addEventListener("close", () => resolve(dlg.returnValue === "ok" ? input.value.trim() : null), { once: true });
+  });
+}
+
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), 4000);
+}
+
+const ACTIONS = {
+  async marker(sid) {
+    const note = await askText({ title: "Working on it", label: "What are you doing? (optional)",
+      placeholder: "e.g. checking the stuck molecule run", confirm: "Mark" });
+    if (note !== null) await api("POST", `/api/sessions/${sid}/marker`, { note });
+  },
+  async "marker-clear"(sid) { await api("DELETE", `/api/sessions/${sid}/marker`); },
+  async note(sid) {
+    const text = await askText({ title: "Add note", label: "Note (kept in the session history)", required: true });
+    if (text) await api("POST", `/api/sessions/${sid}/notes`, { text });
+  },
+  async end(sid) {
+    const note = await askText({ title: "Mark session ended", label: "Reason (optional)",
+      placeholder: "e.g. pane was killed, machine rebooted", confirm: "Mark ended" });
+    if (note !== null) await api("POST", `/api/sessions/${sid}/end`, { note });
+  },
+  async archive(sid) {
+    await api("POST", `/api/sessions/${sid}/archive`, {});
+    state.sessions.delete(sid);
+    render();
+  },
+  async ack(_sid, btn) {
+    const note = await askText({ title: "Acknowledge alert", label: "Note (optional)",
+      placeholder: "e.g. VPN gateway maintenance", confirm: "Acknowledge" });
+    if (note !== null) await api("POST", `/api/alerts/${btn.dataset.alert}/ack`, { note });
+  },
+  async history(sid) { await openHistory(sid); },
+};
+
+document.getElementById("board").addEventListener("click", async ev => {
+  const btn = ev.target.closest("button[data-action]");
+  if (!btn) return;
+  const card = btn.closest("[data-id]");
+  try {
+    await ACTIONS[btn.dataset.action](card ? card.dataset.id : null, btn);
+  } catch (err) {
+    toast(`Action failed: ${err.message}`);
+  }
+});
+
+// --- history drawer ----------------------------------------------------------
+
+function fmtTime(ts) {
+  const d = new Date((ts - state.skew) * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return today ? time : `${d.toLocaleDateString()} ${time}`;
+}
+
+const ALERT_NAMES = { stuck: "Stuck", dead: "Dead", offline: "Host offline" };
+
+function describe(item) {
+  const who = item.agent_type ? `[${item.agent_type}] ` : "";
+  switch (item.type) {
+    case "SessionStart": return ["start", `Session started (${item.source || "unknown"})`];
+    case "SessionEnd": return ["end", `Session ended (${item.reason || "unknown"})`];
+    case "UserPromptSubmit":
+      return ["prompt", item.is_agent_message ? "Subagent result handed back" :
+        (item.prompt_excerpt ? `Prompt: ${item.prompt_excerpt}` : "Prompt submitted")];
+    case "PreToolUse":
+      return ["tool", `${who}${item.tool_name || "tool"}${item.tool_summary ? ": " + item.tool_summary : ""}`];
+    case "PostToolUse": return ["tool-done", `${who}${item.tool_name || "tool"} finished`];
+    case "Notification":
+      return ["notify", item.notification_type === "permission_prompt" ? "Waiting for permission" :
+        item.notification_type === "idle_prompt" ? "Idle, waiting for input" : `Notification (${item.notification_type})`];
+    case "Stop":
+      return ["stop", item.background_task_count
+        ? `Turn finished · ${item.background_task_count} background task(s)` : "Turn finished"];
+    case "SubagentStart": return ["agent", `Subagent started: ${item.agent_type}`];
+    case "SubagentStop": return ["agent", `Subagent finished${item.agent_type ? ": " + item.agent_type : ""}`];
+    case "alert_opened": return ["alert", `Alert: ${ALERT_NAMES[item.kind] || item.kind}`];
+    case "alert_resolved":
+      return ["resolved", `Alert resolved: ${ALERT_NAMES[item.kind] || item.kind} (${item.resolution})`];
+    case "marker_set": return ["you", `You: on it${item.text ? " — " + item.text : ""}`];
+    case "marker_cleared": return ["you", "You: cleared “on it”"];
+    case "note": return ["you", `Note: ${item.text}`];
+    case "ack": return ["you", `You acknowledged an alert${item.text ? " — " + item.text : ""}`];
+    case "ended": return ["you", `You marked the session ended${item.text ? " — " + item.text : ""}`];
+    case "archived": return ["you", "You archived the session"];
+    case "unarchived": return ["you", "You restored the session"];
+    default: return ["other", item.type];
+  }
+}
+
+async function openHistory(sid) {
+  const dlg = document.getElementById("history");
+  const list = dlg.querySelector(".timeline");
+  const showTools = dlg.querySelector("#show-tool-results");
+  list.replaceChildren(h("li", { class: "muted" }, "Loading…"));
+  dlg.showModal();
+  const data = await api("GET", `/api/sessions/${sid}/history`);
+  const s = data.session;
+  dlg.querySelector("h2").textContent = basename(s.cwd);
+  dlg.querySelector(".history-meta").textContent =
+    `${state.hosts.get(s.host_id)?.name || ""} · ${s.tmux_target || s.tmux_pane || "no tmux"} · started ${fmtTime(s.started_at)}`;
+  const draw = () => {
+    const items = data.items.filter(i => showTools.checked || i.type !== "PostToolUse");
+    list.replaceChildren(...items.map(item => {
+      const [cls, text] = describe(item);
+      return h("li", { class: `tl tl-${cls}${item.agent_id ? " tl-sub" : ""}` },
+        h("time", {}, fmtTime(item.at)), h("span", {}, text));
+    }));
+    if (data.truncated) list.append(h("li", { class: "muted" }, "Older events not shown."));
+  };
+  showTools.onchange = draw;
+  draw();
+}
+
+document.querySelectorAll("dialog [data-close]").forEach(b =>
+  b.addEventListener("click", () => b.closest("dialog").close()));
 
 setInterval(render, 5000);  // keep durations fresh
 loadBoard();

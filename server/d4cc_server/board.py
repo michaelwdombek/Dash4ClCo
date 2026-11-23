@@ -16,7 +16,7 @@ SESSION_FIELDS = (
     "id", "host_id", "tmux_pane", "tmux_target", "cwd", "claude_pid", "claude_version",
     "model", "permission_mode", "source", "started_at", "last_event_at", "state",
     "state_since", "activity", "activity_since", "bg_tasks", "ended_at", "end_reason",
-    "replaced_by",
+    "replaced_by", "marker_note", "marker_since", "archived_at",
 )
 HOST_FIELDS = (
     "id", "name", "created_at", "revoked_at", "last_seen_at", "last_heartbeat_at",

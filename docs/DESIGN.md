@@ -245,7 +245,20 @@ acknowledged with a note, which is kept in history.
 - Version flags are computed in the browser (live updates deliver single
   sessions/hosts); the server only provides `D4CC_MIN_CLAUDE_VERSION`.
 
+## Implementation notes (phase 3)
+
+- Annotations (`marker_set`, `marker_cleared`, `note`, `ack`, `ended`,
+  `archived`, `unarchived`) are the audit trail of user actions; the history
+  view merges them with hook events and the alert lifecycle.
+- "Handled" = session marked *on it* or alert acknowledged. Handled items stay
+  visible but are excluded from the tab-title counter and sorted after
+  unhandled ones.
+- Settings are validated all-or-nothing and applied to the live config, so
+  threshold changes take effect on the next health evaluation.
+- Admin mutations only accept `application/json` bodies (no cross-site form
+  posts) in addition to the `SameSite=Strict` session cookie.
+
 ## Open points
 
-- Acknowledging alerts / "working on it" markers (phase 3, `alerts.acked_at`
-  and `note` columns already exist).
+- A restored (unarchived) session only reappears on the board while it is
+  within the "keep ended sessions" window.

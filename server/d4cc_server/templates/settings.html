@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Settings · Dash4ClCo{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand"><a href="/" class="home">Dash4ClCo</a> <span class="ver">v{{ version }}</span></div>
+  <a class="link" href="/" style="margin-left:auto">← Back to board</a>
+  {% if auth %}<form method="post" action="/logout"><button class="link">Log out</button></form>{% endif %}
+</header>
+<main class="page">
+  <section class="panel">
+    <h2>Thresholds &amp; retention</h2>
+    <p class="muted">Changes apply immediately and are kept across restarts. Environment variables only provide the defaults.</p>
+    <form id="settings-form" class="settings-form"></form>
+    <p id="settings-status" class="status" role="status" aria-live="polite"></p>
+  </section>
+  <section class="panel">
+    <h2>Archived sessions</h2>
+    <p class="muted">Archived cards are hidden from the board. Their history is kept until the retention period ends.
+      A restored session shows up on the board again only while it is within “Keep ended sessions on the board”.</p>
+    <ul id="archived" class="archived-list"><li class="muted">Loading…</li></ul>
+  </section>
+</main>
+<script src="/static/settings.js?v={{ version }}"></script>
+{% endblock %}

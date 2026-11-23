@@ -7,9 +7,9 @@ subagents, tmux pane, model and Claude Code version.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
 
-**Status:** phase 2 — hook client, live board, heartbeat and health alerts
-(stuck / dead / offline), version flags. History UI, card actions, Ansible
-deployment and the podman quadlet follow.
+**Status:** phase 3 — hook client, live board, heartbeat, health alerts
+(stuck / dead / offline), version flags, session history, card actions and a
+settings page. Ansible deployment and the podman quadlet follow.
 
 ## Server (development)
 
@@ -36,6 +36,11 @@ Open `http://<host>:8787/` and sign in with the admin token.
 | `D4CC_DEAD_AFTER_HEARTBEATS` | `2` | session process missing from this many heartbeats → **dead** |
 | `D4CC_HEALTH_INTERVAL_S` | `30` | how often alerts are re-evaluated |
 | `D4CC_MIN_CLAUDE_VERSION` | – | reference version for "outdated" (default: newest seen in the fleet) |
+| `D4CC_RETENTION_DAYS` | `30` | events, resolved alerts and ended sessions older than this are deleted (hourly) |
+
+The thresholds, retention and minimum version can also be changed at runtime on
+the **Settings** page; saved values override the environment defaults and
+survive restarts.
 
 Host management: `d4cc-admin add-host | list-hosts | revoke-host | rotate-token`.
 
@@ -76,6 +81,17 @@ Hosts that never sent a heartbeat (e.g. hook-only installs) are never marked off
 Version flags: a host is **outdated** if its installed Claude Code is older than
 the reference version; a session shows **restart pending** if it still runs an
 older binary than the one installed on its host.
+
+## Card actions & history
+
+| Action | Effect |
+|---|---|
+| **On it** (+ optional note) | green marker on the card; the session no longer counts as unhandled in the tab title |
+| **Ack** on an alert (+ optional note) | alert stays visible (muted) until its condition clears, but no longer counts as unhandled |
+| **Note** | free-text entry in the session history |
+| **Mark ended** (dead / offline sessions) | ends the card manually; late events do not revive it |
+| **Archive** (ended sessions) | hides the card; restore from the Settings page |
+| **History** | timeline of hook events, alerts and your actions (tool results hidden by default) |
 
 ## Tests
 

@@ -11,10 +11,37 @@
     <label class="toggle"><input type="checkbox" id="show-ended"> Show ended</label>
   </nav>
   <div class="conn" id="conn" title="Live connection"><span class="dot"></span><span class="label">connecting</span></div>
+  <a class="link" href="/settings">Settings</a>
   {% if auth %}<form method="post" action="/logout"><button class="link">Log out</button></form>{% endif %}
 </header>
 <main id="board" class="board">
   <p class="empty">Loading…</p>
 </main>
+
+<dialog id="ask" class="modal">
+  <form method="dialog">
+    <h2></h2>
+    <label for="ask-text"></label>
+    <textarea id="ask-text" rows="3" maxlength="1000"></textarea>
+    <div class="modal-buttons">
+      <button value="cancel" formnovalidate class="secondary">Cancel</button>
+      <button value="ok" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="history" class="drawer" aria-labelledby="history-title">
+  <header class="drawer-head">
+    <div>
+      <h2 id="history-title"></h2>
+      <p class="history-meta"></p>
+    </div>
+    <button class="link" data-close aria-label="Close history">Close</button>
+  </header>
+  <label class="toggle"><input type="checkbox" id="show-tool-results"> Show tool results</label>
+  <ol class="timeline"></ol>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="/static/app.js?v={{ version }}"></script>
 {% endblock %}

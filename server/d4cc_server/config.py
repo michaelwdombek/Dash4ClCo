@@ -29,6 +29,8 @@ class Config:
     health_interval: float = 30
     # Reference Claude Code version; default = newest version seen in the fleet.
     min_claude_version: str | None = None
+    # Events, resolved alerts and ended sessions older than this are deleted.
+    retention: float = 30 * 86400
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -42,6 +44,7 @@ class Config:
             dead_after_heartbeats=int(_env("D4CC_DEAD_AFTER_HEARTBEATS", "2")),
             health_interval=float(_env("D4CC_HEALTH_INTERVAL_S", "30")),
             min_claude_version=_env("D4CC_MIN_CLAUDE_VERSION"),
+            retention=float(_env("D4CC_RETENTION_DAYS", "30")) * 86400,
         )
 
     def validate(self) -> None:

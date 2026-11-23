@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "d4cc-server"
-version = "0.2.0"
+version = "0.3.0"
 description = "Dash4ClCo - dashboard for Claude Code sessions across workstations"
 requires-python = ">=3.11"
 dependencies = [
