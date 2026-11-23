@@ -7,9 +7,38 @@ subagents, tmux pane, model and Claude Code version.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
 
-**Status:** phase 4 — hook client, live board, heartbeat, health alerts
+**Status:** phase 5 — hook client, live board, heartbeat, health alerts
 (stuck / dead / offline), version flags, session history, card actions,
-settings page and Ansible deployment bundles. The podman quadlet follows.
+settings page, Ansible deployment bundles and podman quadlet packaging.
+
+## Dashboard (podman quadlet)
+
+On the machine that hosts the dashboard (needs podman ≥ 4.4 for quadlets):
+
+```bash
+git clone <repo> Dash4ClCo && cd Dash4ClCo
+deploy/install.sh --publish 10.8.0.1 --public-url http://10.8.0.1:8787   # rootless
+sudo deploy/install.sh --system --publish 10.8.0.1 ...                    # or rootful
+```
+
+The script builds `localhost/dash4clco`, installs `deploy/dash4clco.container`
+and creates the env file with a random admin token (printed once):
+
+| | rootless | rootful |
+|---|---|---|
+| unit | `~/.config/containers/systemd/dash4clco.container` | `/etc/containers/systemd/dash4clco.container` |
+| env file | `~/.config/dash4clco/dash4clco.env` | `/etc/dash4clco/dash4clco.env` |
+| control | `systemctl --user status dash4clco` | `systemctl status dash4clco` |
+
+- `--publish ADDR[:PORT]` binds to the VPN address (default port 8787). If the
+  address is not up yet at boot, systemd retries every 30 s.
+- Data lives in the podman volume `dash4clco-data` (SQLite at `/data/d4cc.db`).
+  Backup: `podman volume export dash4clco-data > d4cc-backup.tar`.
+- Host management inside the container: `podman exec dash4clco d4cc-admin list-hosts`.
+- Update: `git pull && deploy/install.sh` (keeps the env file, the data and the
+  bound address). Thresholds in the env file are only defaults; the Settings
+  page overrides them.
+- TLS is not built in; put a reverse proxy in front if you want it.
 
 ## Server (development)
 

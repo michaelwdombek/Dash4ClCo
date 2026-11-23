@@ -25,6 +25,20 @@ def serve() -> None:
     uvicorn.run(create_app(), host=args.host, port=args.port, proxy_headers=True, log_level="info")
 
 
+def healthcheck() -> None:
+    """Container health check: exit 0 when /healthz answers (python-slim has no curl)."""
+    import json
+    import urllib.request
+
+    port = os.environ.get("D4CC_PORT", "8787")
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as resp:
+            ok = json.load(resp).get("ok") is True
+    except Exception as exc:  # noqa: BLE001 - any failure means unhealthy
+        sys.exit(f"unhealthy: {exc}")
+    sys.exit(0 if ok else "unhealthy")
+
+
 def _fmt(ts: float | None) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "-"
 

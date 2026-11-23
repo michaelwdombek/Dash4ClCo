@@ -1,0 +1,43 @@
+# Podman quadlet for the Dash4ClCo dashboard.
+#
+# Rootless: ~/.config/containers/systemd/dash4clco.container
+#           env file ~/.config/dash4clco/dash4clco.env
+#           (run `loginctl enable-linger $USER` so it starts at boot)
+# Rootful:  /etc/containers/systemd/dash4clco.container
+#           env file /etc/dash4clco/dash4clco.env
+# Then:     systemctl [--user] daemon-reload && systemctl [--user] start dash4clco
+#
+# deploy/install.sh does all of this.
+
+[Unit]
+Description=Dash4ClCo dashboard
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=dash4clco
+Image=localhost/dash4clco:latest
+# `podman auto-update` restarts the service when the local image was rebuilt.
+AutoUpdate=local
+Volume=dash4clco-data:/data
+# %E = /etc (rootful) or ~/.config (rootless)
+EnvironmentFile=%E/dash4clco/dash4clco.env
+# Bind to the VPN address only. If that address is missing at boot the start
+# fails and systemd retries (Restart= below).
+PublishPort=10.8.0.1:8787:8787
+HealthCmd=d4cc-healthcheck
+HealthInterval=60s
+HealthRetries=3
+HealthStartPeriod=20s
+HealthOnFailure=kill
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+
+[Service]
+Restart=always
+RestartSec=30
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

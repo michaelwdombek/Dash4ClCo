@@ -1,0 +1,35 @@
+# Dash4ClCo dashboard image.
+# Build from the repo root:  podman build -f deploy/Containerfile -t localhost/dash4clco:latest .
+FROM docker.io/library/python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+COPY server/ /tmp/server/
+RUN pip install /tmp/server && rm -rf /tmp/server
+
+# Assets for the deploy bundles: the role's files/ are symlinks into ../client.
+COPY ansible/ /app/ansible/
+COPY client/ /app/client/
+
+RUN groupadd --gid 10001 d4cc \
+ && useradd --uid 10001 --gid d4cc --home-dir /data --no-create-home --shell /usr/sbin/nologin d4cc \
+ && mkdir -p /data && chown d4cc:d4cc /data
+
+ENV D4CC_DB=/data/d4cc.db \
+    D4CC_ASSETS_DIR=/app \
+    D4CC_LISTEN=0.0.0.0 \
+    D4CC_PORT=8787
+
+USER d4cc
+WORKDIR /data
+VOLUME /data
+EXPOSE 8787
+
+LABEL org.opencontainers.image.title="Dash4ClCo" \
+      org.opencontainers.image.description="Dashboard for Claude Code sessions across workstations"
+
+CMD ["d4cc-server"]

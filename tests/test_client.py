@@ -221,3 +221,12 @@ def test_merge_unpin_keeps_users_own_autoupdater_setting(tmp_path):
     subprocess.run([str(MERGE), "install", str(f)], env={**os.environ, "D4CC_PIN": "0"}, check=True,
                    capture_output=True)
     assert json.loads(f.read_text())["env"] == {"DISABLE_AUTOUPDATER": "1"}
+
+
+def test_healthcheck_reports_unhealthy_without_server(monkeypatch):
+    from d4cc_server import cli
+
+    monkeypatch.setenv("D4CC_PORT", "1")  # nothing listens on port 1
+    with pytest.raises(SystemExit) as exc:
+        cli.healthcheck()
+    assert str(exc.value.code).startswith("unhealthy")

@@ -25,7 +25,7 @@ ADDR_RE = re.compile(r"^[A-Za-z0-9\[][A-Za-z0-9.:_\[\]-]{0,252}$")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")
 VERSION_RE = re.compile(r"^(latest|stable|\d+\.\d+\.\d+)$")
 URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-\[\]:]+(/[A-Za-z0-9._~/-]*)?$")
-SKIP = {"__pycache__", ".git", ".pytest_cache"}
+SKIP = {"__pycache__", ".git", ".pytest_cache", ".ansible"}
 
 
 class InvalidDeploy(ValueError):

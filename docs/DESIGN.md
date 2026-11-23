@@ -273,6 +273,26 @@ acknowledged with a note, which is kept in history.
   version) is stored per host so "New bundle" and the fleet update bundle can be
   regenerated.
 
+## Implementation notes (phase 5)
+
+- Image: `python:3.13-slim`, server installed with pip, deploy assets copied to
+  `/app/ansible` + `/app/client` (the role's `files/` symlinks resolve inside the
+  image; bundles dereference them). Runs as uid 10001, `D4CC_DB=/data/d4cc.db`.
+- Health check: `d4cc-healthcheck` (python, the slim image has no curl) via the
+  quadlet's `HealthCmd`, not a Containerfile `HEALTHCHECK` (ignored in OCI format).
+  `HealthOnFailure=kill` + `Restart=always` restarts a hung server.
+- Hardening: `ReadOnly=true`, `DropCapability=ALL`, `NoNewPrivileges=true`; only
+  the `/data` volume is writable.
+- `EnvironmentFile=%E/dash4clco/dash4clco.env` resolves to `/etc` (rootful) or
+  `~/.config` (rootless), so one unit file serves both modes.
+- `deploy/install.sh` builds the image (tags `latest` + version), creates the env
+  file with a random admin token on first run, installs the unit, keeps the
+  `PublishPort` of an earlier install, enables linger (rootless) and restarts.
+  Updating = `git pull && deploy/install.sh` (or rebuild + `podman auto-update`).
+- Verified as a rootless quadlet: healthy, non-root, read-only rootfs; login,
+  deploy bundle, hook + heartbeat delivery, data and login cookie survive a
+  restart, systemd restarts a killed container.
+
 ## Open points
 
 - A restored (unarchived) session only reappears on the board while it is
