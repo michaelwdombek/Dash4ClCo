@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block body %}
+<header class="topbar">
+  <div class="brand">Dash4ClCo <span class="ver">v{{ version }}</span></div>
+  <div class="summary" id="summary" aria-live="polite"></div>
+  <nav class="filters" id="filters" aria-label="Filter sessions">
+    <button data-filter="all" class="active">All</button>
+    <button data-filter="attention">Needs you</button>
+    <button data-filter="working">Working</button>
+    <button data-filter="idle">Idle</button>
+    <label class="toggle"><input type="checkbox" id="show-ended"> Show ended</label>
+  </nav>
+  <div class="conn" id="conn" title="Live connection"><span class="dot"></span><span class="label">connecting</span></div>
+  {% if auth %}<form method="post" action="/logout"><button class="link">Log out</button></form>{% endif %}
+</header>
+<main id="board" class="board">
+  <p class="empty">Loading…</p>
+</main>
+<script src="/static/app.js"></script>
+{% endblock %}

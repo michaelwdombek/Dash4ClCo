@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# d4cc-settings-merge [install|uninstall] [SETTINGS_JSON] [HOOK_COMMAND]
+#
+# Idempotently adds (or removes) the d4cc hook entries in a Claude Code
+# settings.json. Existing settings and other hooks are preserved; entries
+# whose command contains "d4cc-hook" are considered ours and replaced.
+# A one-time backup is written to SETTINGS_JSON.d4cc-backup.
+set -euo pipefail
+
+action="${1:-install}"
+settings="${2:-$HOME/.claude/settings.json}"
+hook_cmd="${3:-$HOME/.local/bin/d4cc-hook}"
+
+case "$action" in install|uninstall) ;; *) echo "usage: $0 [install|uninstall] [settings.json] [hook-command]" >&2; exit 2 ;; esac
+command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
+
+mkdir -p "$(dirname "$settings")"
+if [ ! -s "$settings" ]; then
+  [ "$action" = uninstall ] && exit 0
+  echo '{}' >"$settings"
+fi
+jq empty "$settings" 2>/dev/null || { echo "$settings is not valid JSON, refusing to modify it" >&2; exit 1; }
+[ -e "$settings.d4cc-backup" ] || cp -p "$settings" "$settings.d4cc-backup"
+
+tmp=$(mktemp "$settings.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+jq --arg cmd "$hook_cmd" --arg action "$action" '
+  def ours: ((.command // "") | test("d4cc-hook"));
+  ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
+   "Stop", "SubagentStart", "SubagentStop", "SessionEnd"] as $events
+  | .hooks = (.hooks // {})
+  | .hooks |= with_entries(.value |= (map(.hooks |= map(select(ours | not))) | map(select((.hooks | length) > 0))))
+  | .hooks |= with_entries(select((.value | length) > 0))
+  | if $action == "install" then
+      reduce $events[] as $e (.;
+        .hooks[$e] = ((.hooks[$e] // []) + [
+          (if ($e | IN("PreToolUse", "PostToolUse", "Notification")) then {matcher: "*"} else {} end)
+          + {hooks: [{type: "command", command: "\($cmd) \($e)", timeout: 10}]}
+        ]))
+    else . end
+  | if (.hooks | length) == 0 then del(.hooks) else . end
+' "$settings" >"$tmp"
+chmod --reference="$settings" "$tmp" 2>/dev/null || true
+mv "$tmp" "$settings"
+trap - EXIT
+echo "d4cc hooks ${action}ed in $settings"

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Login · Dash4ClCo{% endblock %}
+{% block body %}
+<main class="login">
+  <form method="post" action="/login" class="login-box">
+    <h1>Dash4ClCo</h1>
+    <label for="token">Admin token</label>
+    <input id="token" name="token" type="password" autocomplete="current-password" autofocus required>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+{% endblock %}

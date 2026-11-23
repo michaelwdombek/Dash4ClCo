@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# d4cc-hook <HookEventName>
+#
+# Forwards a Claude Code hook event to the Dash4ClCo dashboard.
+# Reads the hook JSON on stdin, sends a compact, privacy-reduced event and
+# always exits 0 quickly: it must never block or break Claude Code.
+#
+# Config (sourced): ${D4CC_CONFIG:-~/.config/d4cc/client.env}
+#   D4CC_URL           dashboard base URL, e.g. http://10.8.0.1:8787
+#   D4CC_TOKEN         per-host token
+#   D4CC_SEND_PROMPTS  1 = include a 200 char excerpt of user prompts (default 0)
+#   D4CC_SYNC          1 = send in the foreground (tests / debugging)
+
+D4CC_CLIENT_VERSION="0.1.0"
+
+event="${1:-}"
+conf="${D4CC_CONFIG:-$HOME/.config/d4cc/client.env}"
+# shellcheck source=/dev/null
+[ -r "$conf" ] && . "$conf"
+[ -n "$event" ] && [ -n "${D4CC_URL:-}" ] && [ -n "${D4CC_TOKEN:-}" ] || exit 0
+command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || exit 0
+
+input=$(cat) || exit 0
+ts=$(date +%s.%N)
+
+# Walk up from our parent to the claude process (native binary "claude", or node running claude).
+find_claude_pid() {
+  local pid=$PPID comm stat i
+  for i in 1 2 3 4 5 6 7 8; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 1
+    comm=$(cat "/proc/$pid/comm" 2>/dev/null) || return 1
+    if [ "$comm" = "claude" ]; then echo "$pid"; return 0; fi
+    if [ "$comm" = "node" ] && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q claude; then
+      echo "$pid"; return 0
+    fi
+    stat=$(cat "/proc/$pid/stat" 2>/dev/null) || return 1
+    stat=${stat##*) }        # strip "pid (comm) "; comm may contain spaces
+    set -- $stat             # $1=state $2=ppid
+    pid=$2
+  done
+  return 1
+}
+
+# Version of the *running* claude process.
+claude_version() {
+  local pid=$1 exe v cache
+  exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+  exe=${exe% (deleted)}      # binary replaced by an update while the session still runs
+  case "$exe" in
+    */claude/versions/*) echo "${exe##*/}"; return ;;
+  esac
+  cache="${XDG_CACHE_HOME:-$HOME/.cache}/d4cc/version-$pid"
+  if [ -r "$cache" ]; then cat "$cache"; return; fi
+  v=$(timeout 3 claude --version 2>/dev/null | awk '{print $1}')
+  if [ -n "$v" ]; then mkdir -p "${cache%/*}" && echo "$v" >"$cache"; fi
+  echo "$v"
+}
+
+pid="" ver="" target=""
+case "$event" in
+  PreToolUse|PostToolUse) ;;   # hot path: skip process lookups
+  *)
+    pid=$(find_claude_pid) && ver=$(claude_version "$pid")
+    ;;
+esac
+case "$event" in
+  SessionStart|UserPromptSubmit)
+    if [ -n "${TMUX_PANE:-}" ] && command -v tmux >/dev/null 2>&1; then
+      target=$(timeout 2 tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
+    fi
+    ;;
+esac
+
+payload=$(printf '%s' "$input" | jq -c \
+  --arg event "$event" --arg ts "$ts" --arg cv "$D4CC_CLIENT_VERSION" \
+  --arg hostname "${HOSTNAME:-$(uname -n)}" --arg pane "${TMUX_PANE:-}" --arg target "$target" \
+  --arg pid "$pid" --arg ver "$ver" --arg send_prompts "${D4CC_SEND_PROMPTS:-0}" '
+  def trunc($n): if type == "string" and length > $n then .[0:$n] + "…" else . end;
+  def rel($cwd): if type == "string" and $cwd != null and startswith($cwd + "/") then .[($cwd | length) + 1:] else . end;
+  def summary:
+    (.tool_input // {}) as $i | .cwd as $cwd |
+    if .tool_name == "Bash" then ($i.description // (($i.command // "") | split(" ") | first))
+    elif (.tool_name | IN("Read", "Edit", "Write", "MultiEdit", "NotebookEdit")) then (($i.file_path // $i.notebook_path // "") | rel($cwd))
+    elif (.tool_name | IN("Grep", "Glob")) then ($i.pattern // "")
+    elif (.tool_name | IN("Agent", "Task")) then ($i.description // "")
+    elif .tool_name == "WebFetch" then (($i.url // "") | (capture("^(?<h>[a-z]+://[^/]+)") | .h) // "")
+    elif .tool_name == "WebSearch" then ($i.query // "")
+    elif .tool_name == "Skill" then ($i.skill // "")
+    else "" end
+    | tostring | gsub("[\\n\\r]+"; " ") | trunc(120);
+  (.prompt // "") as $prompt |
+  {
+    v: 1,
+    event: $event,
+    ts: ($ts | tonumber),
+    hostname: $hostname,
+    client_version: $cv,
+    session_id,
+    cwd,
+    tmux_pane: $pane,
+    tmux_target: $target,
+    claude_pid: (($pid | tonumber?) // null),
+    claude_version: $ver,
+    model: (.model | if type == "object" then (.id // .display_name) else . end),
+    permission_mode,
+    source,
+    reason,
+    tool_name,
+    tool_use_id,
+    tool_summary: (if .tool_name then summary else null end),
+    subagent_type: (if (.tool_name | IN("Agent", "Task")) then (.tool_input.subagent_type // "general-purpose") else null end),
+    agent_id,
+    agent_type,
+    notification_type,
+    message: (.message | trunc(200)),
+    background_task_count: (.background_tasks | if type == "array" then length else null end),
+    is_agent_message: (if $event == "UserPromptSubmit" then ($prompt | startswith("<agent-message")) else null end),
+    prompt_excerpt: (if $send_prompts == "1" and $event == "UserPromptSubmit" and ($prompt | startswith("<") | not)
+                     then ($prompt | gsub("[\\n\\r]+"; " ") | trunc(200)) else null end)
+  }
+  | with_entries(select(.value != null and .value != ""))
+' 2>/dev/null) || exit 0
+[ -n "$payload" ] || exit 0
+
+send() {
+  # Token goes through a curl config on a pipe, not argv (keeps it out of `ps`).
+  printf '%s' "$payload" | curl -fsS -m 3 -X POST \
+    -K <(printf 'header = "Authorization: Bearer %s"\n' "$D4CC_TOKEN") \
+    -H 'Content-Type: application/json' --data-binary @- \
+    "${D4CC_URL%/}/api/events" >/dev/null 2>&1
+}
+
+if [ "${D4CC_SYNC:-0}" = "1" ]; then
+  send
+else
+  # Detach completely so Claude Code does not wait for the request.
+  ( send & ) </dev/null >/dev/null 2>&1
+fi
+exit 0

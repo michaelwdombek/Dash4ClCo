@@ -57,11 +57,21 @@ Captured in `tests/fixtures/hook-payloads-2.1.330.jsonl`. Every payload carries
 | `PostToolUse` | as above + `duration_ms` | activity done |
 | `SubagentStart` | `agent_id`, `agent_type` | add child row |
 | `SubagentStop` | `agent_id`, `agent_type` | child row done |
-| `Notification` | `notification_type` / `message` (**not yet captured** — does not fire in headless mode; verify in an interactive tmux session in phase 1) | permission prompt → **needs you** |
+| `Notification` | `notification_type`: `permission_prompt` (~6 s after the tool request), `idle_prompt` (60 s after `Stop`); `message`. Only fires in interactive sessions | permission prompt → **needs you**; idle prompt → idle |
 | `Stop` | `background_tasks`, `session_crons` | → idle (or "idle, background tasks running" if non-empty) |
 | `SessionEnd` | `reason` | → ended |
 
-Notes:
+Notes (verified live in phase 1):
+- `SessionStart` carries `model` in interactive sessions.
+- Subagents run in the background by default: the Agent tool's `PostToolUse`
+  fires ~1 ms after `SubagentStart`, long before `SubagentStop`. A subagent
+  therefore only ends on `SubagentStop` (or `SessionEnd`).
+- Because the hook sends asynchronously, events fired milliseconds apart can
+  arrive in any order. State changes use the client timestamp (older events are
+  stored but do not change state); the Agent tool call (description) and
+  `SubagentStart` (agent id) are paired in either order within 10 s.
+- Claude Code runs internal helper agents that emit `SubagentStop` with an empty
+  `agent_type` and no `SubagentStart`; these are ignored.
 - `TMUX_PANE` is inherited by hook processes when Claude runs inside tmux.
 - The hook payload does not include Claude's PID; the client walks up its process
   tree to find the `claude` process and reports its PID (used for liveness checks).
@@ -224,4 +234,5 @@ acknowledged with a note, which is kept in history.
 
 ## Open points
 
-- Verify `Notification` payload (permission prompt) in an interactive tmux session.
+- Sessions killed together with their tmux pane do not send `SessionEnd`
+  (observed in the phase 1 live test) — covered by the phase 2 heartbeat.

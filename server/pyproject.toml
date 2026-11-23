@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "d4cc-server"
+version = "0.1.0"
+description = "Dash4ClCo - dashboard for Claude Code sessions across workstations"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+d4cc-server = "d4cc_server.cli:serve"
+d4cc-admin = "d4cc_server.cli:admin"
+
+[tool.setuptools.packages.find]
+include = ["d4cc_server*"]
+
+[tool.setuptools.package-data]
+d4cc_server = ["templates/*", "static/*"]
