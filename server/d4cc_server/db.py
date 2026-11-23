@@ -117,6 +117,10 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    # 4 - deployment metadata per host (ansible_host, users, Claude version)
+    """
+    ALTER TABLE hosts ADD COLUMN deploy_json TEXT;
+    """,
 ]
 
 
@@ -157,6 +161,13 @@ def create_host(conn: sqlite3.Connection, name: str) -> str:
         "INSERT INTO hosts(name, token_hash, created_at) VALUES (?, ?, ?)",
         (name, hash_token(token), time.time()),
     )
+    return token
+
+
+def rotate_token(conn: sqlite3.Connection, host_id: int) -> str:
+    """Issue a new token for a host (also un-revokes it). The old token stops working."""
+    token = "d4cc_" + secrets.token_urlsafe(32)
+    conn.execute("UPDATE hosts SET token_hash = ?, revoked_at = NULL WHERE id = ?", (hash_token(token), host_id))
     return token
 
 

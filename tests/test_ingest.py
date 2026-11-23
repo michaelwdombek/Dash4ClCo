@@ -176,3 +176,12 @@ def test_agent_call_without_subagent_closed_on_stop(conn, host, ingestor):
     ingestor.apply(host["id"], {**AGENT_POST, "session_id": "s", "ts": 2}, received_at=101)
     ingestor.apply(host["id"], {"event": "Stop", "session_id": "s", "ts": 30}, received_at=130)
     assert session(conn, "s")["subagents"][0]["ended_at"] == 130
+
+
+def test_lone_session_end_creates_no_card(conn, host, ingestor):
+    # `claude update` and other CLI subcommands fire only SessionEnd (seen in the phase 4 deploy test)
+    res = ingestor.apply(host["id"], {"event": "SessionEnd", "session_id": "cli", "ts": 1, "cwd": "/",
+                                      "reason": "other"}, 1)
+    assert res.sessions == set()
+    assert session(conn, "cli") is None
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE session_id = 'cli'").fetchone()[0] == 1

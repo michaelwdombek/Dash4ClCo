@@ -13,6 +13,8 @@ import pytest
 from conftest import ADMIN, FIXTURES, ROOT, load_fixture
 
 HOOK = ROOT / "client" / "d4cc-hook"
+CLIENT_VERSION = next(line.split('"')[1] for line in HOOK.read_text().splitlines()
+                      if line.startswith("D4CC_CLIENT_VERSION="))
 MERGE = ROOT / "client" / "d4cc-settings-merge"
 
 
@@ -115,7 +117,7 @@ def test_hook_replays_fixture_to_board(server):
     assert s["tmux_pane"] == "%7"
     assert s["subagents"][0]["agent_type"] == "Explore"
     assert s["subagents"][0]["description"] == "List files in cwd"
-    assert board["hosts"][0]["client_version"] == "0.2.0"
+    assert board["hosts"][0]["client_version"] == CLIENT_VERSION
 
 
 def test_hook_privacy_no_prompt_or_command_text(server):
@@ -172,7 +174,7 @@ def test_heartbeat_print_mode(tmp_path):
                        "D4CC_CONFIG": "/dev/null"}, capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
     data = json.loads(r.stdout)
-    assert data["client_version"] == "0.2.0"
+    assert data["client_version"] == CLIENT_VERSION
     assert isinstance(data["processes"], list)
     assert all(isinstance(p["pid"], int) for p in data["processes"])
 
@@ -191,3 +193,31 @@ def test_heartbeat_fails_loudly_without_config(tmp_path):
     r = subprocess.run([str(HEARTBEAT)], env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)},
                        capture_output=True, text=True, timeout=20)
     assert r.returncode == 1 and "not configured" in r.stderr
+
+
+def test_merge_reports_change_and_pin_handling(tmp_path):
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps({"env": {"FOO": "bar"}}))
+    assert merge("install", f).stdout.startswith("changed")
+    mtime = f.stat().st_mtime_ns
+    assert merge("install", f).stdout.startswith("unchanged")
+    assert f.stat().st_mtime_ns == mtime  # not rewritten
+
+    def pin(value):
+        return subprocess.run([str(MERGE), "install", str(f)], capture_output=True, text=True,
+                              env={**os.environ, "D4CC_PIN": value})
+
+    assert pin("1").stdout.startswith("changed")
+    env = json.loads(f.read_text())["env"]
+    assert env == {"FOO": "bar", "DISABLE_AUTOUPDATER": "1", "D4CC_PINNED": "1"}
+    assert pin("1").stdout.startswith("unchanged")
+    assert pin("0").stdout.startswith("changed")
+    assert json.loads(f.read_text())["env"] == {"FOO": "bar"}
+
+
+def test_merge_unpin_keeps_users_own_autoupdater_setting(tmp_path):
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps({"env": {"DISABLE_AUTOUPDATER": "1"}}))
+    subprocess.run([str(MERGE), "install", str(f)], env={**os.environ, "D4CC_PIN": "0"}, check=True,
+                   capture_output=True)
+    assert json.loads(f.read_text())["env"] == {"DISABLE_AUTOUPDATER": "1"}

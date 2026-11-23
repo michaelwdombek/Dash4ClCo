@@ -203,9 +203,9 @@ acknowledged with a note, which is kept in history.
 4. Role `d4cc_client` (supports apt **and** dnf families):
    - packages: `curl`, `jq`, `tmux`, `procps`
    - installs Claude Code via the official native installer for the target user:
-     latest by default; `d4cc_claude_version` (also a field in the "Add machine"
-     form) pins a specific version. Re-running with a newer/other version
-     updates an existing install.
+     latest by default; `d4cc_client_claude_version` (also a field in the "Add machine"
+     form) pins a specific version (and disables the auto-updater). Re-running
+     with latest runs `claude update`; with another pin it reinstalls.
    - installs `d4cc-hook`, `d4cc-heartbeat`, `client.env` (0600)
    - merges hooks into `~/.claude/settings.json`
    - enables the heartbeat systemd user timer (+ `loginctl enable-linger`)
@@ -257,6 +257,21 @@ acknowledged with a note, which is kept in history.
   threshold changes take effect on the next health evaluation.
 - Admin mutations only accept `application/json` bodies (no cross-site form
   posts) in addition to the `SameSite=Strict` session cookie.
+
+## Implementation notes (phase 4)
+
+- Role variables use the `d4cc_client_` prefix (ansible-lint production profile).
+- Verified end to end against Debian 12 and Rocky 9 systemd containers: fresh
+  install (latest and pinned), idempotent second run (`changed=0`), switching a
+  pin back to latest, heartbeat + hook delivery from the host.
+- Findings from that test: fresh Debian needs an apt cache update; EL9's
+  `curl-minimal` conflicts with `curl` (role requests `/usr/bin/curl`);
+  `claude update` and other CLI subcommands fire a lone `SessionEnd` — the server
+  records it but creates no card for unknown sessions.
+- Bundle tokens exist only in the download (`host_vars/<host>.yml`, mode 0600);
+  the server stores hashes. Deployment metadata (SSH address/user, Claude user,
+  version) is stored per host so "New bundle" and the fleet update bundle can be
+  regenerated.
 
 ## Open points
 

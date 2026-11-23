@@ -1,0 +1,59 @@
+---
+- name: Create client directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ d4cc_client_user }}"
+    group: "{{ d4cc_client_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ d4cc_client_home }}/.local", mode: "0755" }
+    - { path: "{{ d4cc_client_home }}/.local/bin", mode: "0755" }
+    - { path: "{{ d4cc_client_home }}/.config", mode: "0755" }
+    - { path: "{{ d4cc_client_home }}/.config/d4cc", mode: "0700" }
+    - { path: "{{ d4cc_client_home }}/.claude", mode: "0700" }
+
+- name: Install client scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ d4cc_client_home }}/.local/bin/{{ item }}"
+    owner: "{{ d4cc_client_user }}"
+    group: "{{ d4cc_client_group }}"
+    mode: "0755"
+  loop: [d4cc-hook, d4cc-heartbeat, d4cc-settings-merge]
+
+- name: Write client configuration (URL and token)
+  ansible.builtin.template:
+    src: client.env.j2
+    dest: "{{ d4cc_client_home }}/.config/d4cc/client.env"
+    owner: "{{ d4cc_client_user }}"
+    group: "{{ d4cc_client_group }}"
+    mode: "0600"
+  no_log: true
+  when: d4cc_client_token | length > 0
+
+- name: Check for an existing client configuration
+  ansible.builtin.stat:
+    path: "{{ d4cc_client_home }}/.config/d4cc/client.env"
+  register: d4cc_client_client_env
+
+- name: Require a token on first install
+  ansible.builtin.assert:
+    that: d4cc_client_client_env.stat.exists
+    fail_msg: >-
+      No d4cc token given and no existing client.env on this host. Use a bundle from
+      the dashboard's Deploy page (it contains the host token).
+
+- name: Merge hooks into Claude Code settings
+  ansible.builtin.command:
+    argv:
+      - "{{ d4cc_client_home }}/.local/bin/d4cc-settings-merge"
+      - install
+      - "{{ d4cc_client_home }}/.claude/settings.json"
+      - "{{ d4cc_client_home }}/.local/bin/d4cc-hook"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  environment:
+    D4CC_PIN: "{{ '1' if d4cc_client_claude_install | bool and d4cc_client_claude_version is match('^\\d') else '0' }}"
+  register: d4cc_client_merge
+  changed_when: d4cc_client_merge.stdout is match('^changed')

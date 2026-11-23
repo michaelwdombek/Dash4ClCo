@@ -7,9 +7,9 @@ subagents, tmux pane, model and Claude Code version.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
 
-**Status:** phase 3 — hook client, live board, heartbeat, health alerts
-(stuck / dead / offline), version flags, session history, card actions and a
-settings page. Ansible deployment and the podman quadlet follow.
+**Status:** phase 4 — hook client, live board, heartbeat, health alerts
+(stuck / dead / offline), version flags, session history, card actions,
+settings page and Ansible deployment bundles. The podman quadlet follows.
 
 ## Server (development)
 
@@ -43,6 +43,32 @@ the **Settings** page; saved values override the environment defaults and
 survive restarts.
 
 Host management: `d4cc-admin add-host | list-hosts | revoke-host | rotate-token`.
+
+## Deploying clients (recommended)
+
+On the dashboard's **Deploy** page:
+
+1. **Add a machine** — host name, SSH address/user, the account that runs
+   Claude Code, Claude Code version (`latest`, `stable` or exact `x.y.z` to pin)
+   and the dashboard URL as reachable from that host.
+2. A bundle `d4cc-<host>.tar.gz` downloads, containing the Ansible role, playbook,
+   inventory and `host_vars/<host>.yml` with the host's token (shown only there).
+3. Run it:
+
+   ```bash
+   tar xzf d4cc-<host>.tar.gz && cd d4cc-<host>
+   ansible-playbook playbook.yml --ask-become-pass
+   ```
+
+4. Log in to Claude Code once on the host (`claude`) — login is interactive.
+
+**New bundle** on an existing host issues a new token (the old one stops
+working). **Download fleet update bundle** contains all active hosts without
+tokens and updates role, client and Claude Code on machines that are already
+set up. Supports apt (Debian/Ubuntu) and dnf (RHEL/Rocky/Fedora); see
+[ansible/README.md](ansible/README.md).
+
+Set `D4CC_PUBLIC_URL` on the server to prefill the dashboard URL.
 
 ## Client (per workstation, manual install)
 

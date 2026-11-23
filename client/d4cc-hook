@@ -11,7 +11,7 @@
 #   D4CC_SEND_PROMPTS  1 = include a 200 char excerpt of user prompts (default 0)
 #   D4CC_SYNC          1 = send in the foreground (tests / debugging)
 
-D4CC_CLIENT_VERSION="0.2.0"
+D4CC_CLIENT_VERSION="0.4.0"
 
 event="${1:-}"
 conf="${D4CC_CONFIG:-$HOME/.config/d4cc/client.env}"

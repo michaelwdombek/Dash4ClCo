@@ -1,0 +1,4 @@
+---
+# /usr/bin/curl instead of "curl": EL9 ships curl-minimal, which conflicts with
+# the full curl package; the file provide is satisfied by either.
+d4cc_client_packages: [/usr/bin/curl, jq, tmux, procps-ng, ca-certificates, dbus]

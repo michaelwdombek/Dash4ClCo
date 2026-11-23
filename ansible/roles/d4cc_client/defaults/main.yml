@@ -1,0 +1,24 @@
+---
+# Dashboard base URL as reachable from the client (over the VPN).
+d4cc_client_url: ""
+# Per-host token. Required on first install; leave empty to keep the existing
+# ~/.config/d4cc/client.env (e.g. when only updating the client).
+d4cc_client_token: ""
+
+# Account that runs Claude Code (hooks, heartbeat and Claude are installed for it).
+d4cc_client_user: "{{ ansible_user | default(ansible_user_id) }}"
+
+# Claude Code installation
+d4cc_client_claude_install: true
+# "latest" (default, auto-updates stay on), "stable", or an exact version such as
+# "2.1.330" (pins it: Claude Code's auto-updater is disabled for this user).
+d4cc_client_claude_version: latest
+# With "latest"/"stable": run `claude update` when Claude Code is already installed.
+d4cc_client_claude_update: true
+
+# Send 200-character prompt excerpts to the dashboard (off: no prompt text leaves the host).
+d4cc_client_send_prompts: false
+# Keep the heartbeat timer running without an active login session.
+d4cc_client_enable_linger: true
+# Send a heartbeat at the end of the play so the host shows up immediately.
+d4cc_client_send_test_heartbeat: true

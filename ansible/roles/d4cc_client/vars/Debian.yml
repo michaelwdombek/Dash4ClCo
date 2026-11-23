@@ -1,0 +1,3 @@
+---
+# dbus-user-session: user bus socket needed by `systemctl --user`
+d4cc_client_packages: [curl, jq, tmux, procps, ca-certificates, dbus-user-session]

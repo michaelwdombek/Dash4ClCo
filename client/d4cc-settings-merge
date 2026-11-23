@@ -5,26 +5,38 @@
 # settings.json. Existing settings and other hooks are preserved; entries
 # whose command contains "d4cc-hook" are considered ours and replaced.
 # A one-time backup is written to SETTINGS_JSON.d4cc-backup.
+#
+# D4CC_PIN=1  also disable Claude Code's auto-updater (pinned version):
+#             sets env.DISABLE_AUTOUPDATER plus the ownership marker env.D4CC_PINNED
+# D4CC_PIN=0  remove that again, but only if d4cc set it (marker present)
+# unset       leave the auto-updater setting alone
+#
+# Prints "changed: ..." or "unchanged: ..."; the file is only rewritten on change.
 set -euo pipefail
 
 action="${1:-install}"
 settings="${2:-$HOME/.claude/settings.json}"
 hook_cmd="${3:-$HOME/.local/bin/d4cc-hook}"
+pin="${D4CC_PIN:-}"
 
 case "$action" in install|uninstall) ;; *) echo "usage: $0 [install|uninstall] [settings.json] [hook-command]" >&2; exit 2 ;; esac
+case "$pin" in ""|0|1) ;; *) echo "D4CC_PIN must be 0, 1 or unset" >&2; exit 2 ;; esac
+[ "$action" = uninstall ] && pin=0
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
 
 mkdir -p "$(dirname "$settings")"
+created=0
 if [ ! -s "$settings" ]; then
-  [ "$action" = uninstall ] && exit 0
+  if [ "$action" = uninstall ]; then echo "unchanged: $settings does not exist"; exit 0; fi
   echo '{}' >"$settings"
+  chmod 0600 "$settings"
+  created=1
 fi
 jq empty "$settings" 2>/dev/null || { echo "$settings is not valid JSON, refusing to modify it" >&2; exit 1; }
-[ -e "$settings.d4cc-backup" ] || cp -p "$settings" "$settings.d4cc-backup"
 
 tmp=$(mktemp "$settings.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
-jq --arg cmd "$hook_cmd" --arg action "$action" '
+jq --arg cmd "$hook_cmd" --arg action "$action" --arg pin "$pin" '
   def ours: ((.command // "") | test("d4cc-hook"));
   ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification",
    "Stop", "SubagentStart", "SubagentStop", "SessionEnd"] as $events
@@ -39,8 +51,18 @@ jq --arg cmd "$hook_cmd" --arg action "$action" '
         ]))
     else . end
   | if (.hooks | length) == 0 then del(.hooks) else . end
+  | if $pin == "1" then .env = ((.env // {}) + {DISABLE_AUTOUPDATER: "1", D4CC_PINNED: "1"})
+    elif $pin == "0" and (.env.D4CC_PINNED? // null) != null then
+      .env |= del(.DISABLE_AUTOUPDATER, .D4CC_PINNED) | if (.env | length) == 0 then del(.env) else . end
+    else . end
 ' "$settings" >"$tmp"
+
+if [ "$created" = 0 ] && [ "$(jq -S . "$settings")" = "$(jq -S . "$tmp")" ]; then
+  echo "unchanged: d4cc settings already up to date in $settings"
+  exit 0
+fi
+[ -e "$settings.d4cc-backup" ] || cp -p "$settings" "$settings.d4cc-backup"
 chmod --reference="$settings" "$tmp" 2>/dev/null || true
 mv "$tmp" "$settings"
 trap - EXIT
-echo "d4cc hooks ${action}ed in $settings"
+echo "changed: d4cc hooks ${action}ed in $settings"

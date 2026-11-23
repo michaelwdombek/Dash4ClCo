@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import os
 import time
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import __version__, actions, board, db, settings
+from . import __version__, actions, board, db, deploy, settings
 from .config import Config
 from .health import Health, InvalidHeartbeat
 from .hub import Hub
@@ -272,6 +273,101 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         hub.publish("resync", None)
         return {"values": settings.current(cfg)}
 
+    # -- deployment -------------------------------------------------------------
+
+    def public_url(request: Request) -> str:
+        return os.environ.get("D4CC_PUBLIC_URL") or str(request.base_url).rstrip("/")
+
+    def bundle_response(data: bytes, filename: str) -> Response:
+        return Response(data, media_type="application/gzip", headers={
+            "Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+    def deploy_host_row(host_id: int):
+        row = conn.execute("SELECT * FROM hosts WHERE id = ?", (host_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "host not found")
+        return row
+
+    @app.get("/api/deploy/hosts", dependencies=[Depends(require_admin)])
+    def deploy_hosts(request: Request):
+        rows = conn.execute("SELECT * FROM hosts ORDER BY name").fetchall()
+        hosts = []
+        for r in rows:
+            h = board.host_dict(conn, r)
+            h["deploy"] = vars(deploy.load_spec(r))
+            hosts.append(h)
+        return {"hosts": hosts, "public_url": public_url(request)}
+
+    @app.post("/api/deploy/hosts", dependencies=[Depends(require_admin)])
+    async def deploy_create(request: Request):
+        body = await json_body(request)
+        try:
+            name = deploy.validate_name(body.get("name"))
+            url = deploy.validate_url(body.get("url") or public_url(request))
+            spec = deploy.DeploySpec.parse(body)
+            deploy.assets_dir()
+        except deploy.InvalidDeploy as exc:
+            raise HTTPException(422, str(exc))
+        if conn.execute("SELECT 1 FROM hosts WHERE name = ?", (name,)).fetchone():
+            raise HTTPException(409, f"host {name!r} already exists - issue a new bundle from the host list")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            token = db.create_host(conn, name)
+            host_id = db.host_for_token(conn, token)["id"]
+            deploy.save_spec(conn, host_id, spec)
+            data = deploy.build_bundle(name, [(name, spec)], url, {name: token})
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        hub.publish("resync", None)
+        return bundle_response(data, f"d4cc-{name}.tar.gz")
+
+    @app.post("/api/deploy/hosts/{host_id}/bundle", dependencies=[Depends(require_admin)])
+    async def deploy_new_token(host_id: int, request: Request):
+        """New token + bundle for an existing host (the previous token stops working)."""
+        body = await json_body(request)
+        row = deploy_host_row(host_id)
+        try:
+            url = deploy.validate_url(body.get("url") or public_url(request))
+            spec = deploy.DeploySpec.parse({**vars(deploy.load_spec(row)), **body})
+            deploy.assets_dir()
+        except deploy.InvalidDeploy as exc:
+            raise HTTPException(422, str(exc))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            token = db.rotate_token(conn, host_id)
+            deploy.save_spec(conn, host_id, spec)
+            data = deploy.build_bundle(row["name"], [(row["name"], spec)], url, {row["name"]: token})
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        hub.publish("resync", None)
+        return bundle_response(data, f"d4cc-{row['name']}.tar.gz")
+
+    @app.post("/api/deploy/hosts/{host_id}/revoke", dependencies=[Depends(require_admin)])
+    async def deploy_revoke(host_id: int, request: Request):
+        await json_body(request)
+        deploy_host_row(host_id)
+        conn.execute("UPDATE hosts SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", (time.time(), host_id))
+        check_health()
+        hub.publish("resync", None)
+        return {"ok": True}
+
+    @app.get("/api/deploy/update-bundle", dependencies=[Depends(require_admin)])
+    def deploy_update_bundle(request: Request, url: str | None = None):
+        """Bundle for all active hosts without tokens (updates role, client and Claude Code)."""
+        try:
+            url = deploy.validate_url(url or public_url(request))
+            rows = conn.execute("SELECT * FROM hosts WHERE revoked_at IS NULL ORDER BY name").fetchall()
+            if not rows:
+                raise deploy.InvalidDeploy("no active hosts")
+            data = deploy.build_bundle("fleet-update", [(r["name"], deploy.load_spec(r)) for r in rows], url, {})
+        except deploy.InvalidDeploy as exc:
+            raise HTTPException(422, str(exc))
+        return bundle_response(data, "d4cc-fleet-update.tar.gz")
+
     # -- UI -----------------------------------------------------------------
 
     @app.get("/login", response_class=HTMLResponse)
@@ -307,6 +403,14 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=303)
         return templates.TemplateResponse(
             request, "settings.html", {"version": __version__, "auth": not cfg.auth_disabled}
+        )
+
+    @app.get("/deploy", response_class=HTMLResponse)
+    def deploy_page(request: Request):
+        if not is_admin(request):
+            return RedirectResponse("/login", status_code=303)
+        return templates.TemplateResponse(
+            request, "deploy.html", {"version": __version__, "auth": not cfg.auth_disabled}
         )
 
     @app.get("/favicon.ico")

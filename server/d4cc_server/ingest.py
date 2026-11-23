@@ -105,6 +105,10 @@ class Ingestor:
                       " client_version = COALESCE(?, client_version) WHERE id = ?",
                       (received_at, ev.get("hostname"), ev.get("client_version"), host_id))
             session = self._get(sid)
+            if session is None and etype == "SessionEnd":
+                # CLI subcommands like `claude update` fire a lone SessionEnd: no card for those.
+                c.execute("COMMIT")
+                return Result()
             if session is None:
                 self._create(sid, host_id, ev, received_at)
                 session = self._get(sid)

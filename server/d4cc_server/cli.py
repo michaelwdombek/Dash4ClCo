@@ -62,13 +62,10 @@ def admin(argv: list[str] | None = None) -> None:
                            (time.time(), args.name))
         sys.exit(0 if cur.rowcount else f"no active host {args.name!r}")
     elif args.cmd == "rotate-token":
-        import secrets
-        token = "d4cc_" + secrets.token_urlsafe(32)
-        cur = conn.execute("UPDATE hosts SET token_hash = ?, revoked_at = NULL WHERE name = ?",
-                           (db.hash_token(token), args.name))
-        if not cur.rowcount:
+        row = conn.execute("SELECT id FROM hosts WHERE name = ?", (args.name,)).fetchone()
+        if row is None:
             sys.exit(f"no host {args.name!r}")
-        print(token)
+        print(db.rotate_token(conn, row["id"]))
 
 
 if __name__ == "__main__":

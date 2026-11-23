@@ -1,0 +1,62 @@
+---
+- name: Check for an existing Claude Code installation
+  ansible.builtin.stat:
+    path: "{{ d4cc_client_home }}/.local/bin/claude"
+  register: d4cc_client_claude_bin
+
+- name: Read the installed Claude Code version
+  ansible.builtin.command: "{{ d4cc_client_home }}/.local/bin/claude --version"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  register: d4cc_client_claude_before
+  changed_when: false
+  failed_when: false
+  when: d4cc_client_claude_bin.stat.exists
+
+- name: Decide what to do with Claude Code
+  ansible.builtin.set_fact:
+    d4cc_client_claude_installed: "{{ (d4cc_client_claude_before.stdout | default('')).split(' ') | first }}"
+    d4cc_client_claude_pinned: "{{ d4cc_client_claude_version is match('^\\d') }}"
+
+- name: Install Claude Code with the official installer, version {{ d4cc_client_claude_version }}
+  ansible.builtin.shell:
+    cmd: set -o pipefail && curl -fsSL https://claude.ai/install.sh | bash -s {{ d4cc_client_claude_version | quote }}
+    executable: /bin/bash
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  environment:
+    HOME: "{{ d4cc_client_home }}"
+  register: d4cc_client_claude_install_result
+  changed_when: true
+  when: >-
+    not d4cc_client_claude_bin.stat.exists or d4cc_client_claude_installed == ''
+    or (d4cc_client_claude_pinned | bool and d4cc_client_claude_installed != d4cc_client_claude_version)
+
+- name: Update Claude Code (latest / stable)
+  ansible.builtin.command: "{{ d4cc_client_home }}/.local/bin/claude update"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  environment:
+    HOME: "{{ d4cc_client_home }}"
+  register: d4cc_client_claude_update_result
+  changed_when: false  # reported by the version comparison below
+  failed_when: false
+  when:
+    - d4cc_client_claude_bin.stat.exists and d4cc_client_claude_installed != ''
+    - not d4cc_client_claude_pinned | bool
+    - d4cc_client_claude_update | bool
+
+- name: Read the resulting Claude Code version
+  ansible.builtin.command: "{{ d4cc_client_home }}/.local/bin/claude --version"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  register: d4cc_client_claude_after
+  changed_when: (d4cc_client_claude_after.stdout.split(' ') | first) != d4cc_client_claude_installed
+  failed_when: d4cc_client_claude_after.rc != 0
+
+- name: Report the Claude Code version
+  ansible.builtin.debug:
+    msg: >-
+      Claude Code {{ d4cc_client_claude_after.stdout.split(' ') | first }}
+      (before: {{ d4cc_client_claude_installed or 'not installed' }};
+      {{ 'pinned, auto-updater disabled' if d4cc_client_claude_pinned | bool else 'auto-updates enabled' }})

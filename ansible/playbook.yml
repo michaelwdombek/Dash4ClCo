@@ -1,0 +1,8 @@
+---
+# Installs Claude Code and the Dash4ClCo client on all hosts of the
+# `d4cc_clients` group. Per-host settings (token, user, version) live in host_vars/.
+- name: Dash4ClCo client
+  hosts: d4cc_clients
+  become: true
+  roles:
+    - d4cc_client

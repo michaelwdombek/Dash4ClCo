@@ -1,0 +1,51 @@
+---
+# Dash4ClCo client: Claude Code + hooks + heartbeat for one user.
+# Needs privilege escalation (packages, linger); user files are written as d4cc_client_user.
+
+- name: Validate input
+  ansible.builtin.assert:
+    that:
+      - d4cc_client_url is match('^https?://[^\s/]+')
+      - d4cc_client_user | length > 0
+      - d4cc_client_claude_version is match('^(latest|stable|\d+\.\d+\.\d+)$')
+    fail_msg: >-
+      d4cc_client_url must be the dashboard URL (http[s]://host:port), d4cc_client_user must be set and
+      d4cc_client_claude_version must be latest, stable or an exact version like 2.1.330.
+
+- name: Load OS family specific variables
+  ansible.builtin.include_vars: "{{ ansible_facts['os_family'] }}.yml"
+
+- name: Install required packages (apt)
+  ansible.builtin.apt:
+    name: "{{ d4cc_client_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts['pkg_mgr'] == 'apt'
+
+- name: Install required packages (dnf)
+  ansible.builtin.dnf:
+    name: "{{ d4cc_client_packages }}"
+    state: present
+  when: ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
+
+- name: Look up the Claude Code user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ d4cc_client_user }}"
+
+- name: Remember user home and uid
+  ansible.builtin.set_fact:
+    d4cc_client_home: "{{ ansible_facts.getent_passwd[d4cc_client_user][4] }}"
+    d4cc_client_uid: "{{ ansible_facts.getent_passwd[d4cc_client_user][1] }}"
+    d4cc_client_group: "{{ ansible_facts.getent_passwd[d4cc_client_user][2] }}"
+
+- name: Install / update Claude Code
+  ansible.builtin.include_tasks: claude.yml
+  when: d4cc_client_claude_install | bool
+
+- name: Install the Dash4ClCo client
+  ansible.builtin.include_tasks: client.yml
+
+- name: Enable the heartbeat timer
+  ansible.builtin.include_tasks: systemd.yml

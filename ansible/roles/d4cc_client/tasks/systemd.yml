@@ -1,0 +1,71 @@
+---
+- name: Enable lingering so the user's timers run without a login session
+  ansible.builtin.command: loginctl enable-linger {{ d4cc_client_user | quote }}
+  args:
+    creates: /var/lib/systemd/linger/{{ d4cc_client_user }}
+  when: d4cc_client_enable_linger | bool
+
+- name: Wait for the user's systemd instance
+  ansible.builtin.wait_for:
+    path: /run/user/{{ d4cc_client_uid }}/bus
+    timeout: 30
+
+- name: Create the systemd user unit directory
+  ansible.builtin.file:
+    path: "{{ d4cc_client_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ d4cc_client_user }}"
+    group: "{{ d4cc_client_group }}"
+    mode: "0755"
+
+- name: Install heartbeat units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ d4cc_client_home }}/.config/systemd/user/{{ item }}"
+    owner: "{{ d4cc_client_user }}"
+    group: "{{ d4cc_client_group }}"
+    mode: "0644"
+  loop: [d4cc-heartbeat.service, d4cc-heartbeat.timer]
+  register: d4cc_client_units
+
+- name: Enable and start the heartbeat timer
+  ansible.builtin.systemd_service:
+    name: d4cc-heartbeat.timer
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: "{{ d4cc_client_units is changed }}"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  environment:
+    XDG_RUNTIME_DIR: /run/user/{{ d4cc_client_uid }}
+
+- name: Send a heartbeat now
+  ansible.builtin.command: "{{ d4cc_client_home }}/.local/bin/d4cc-heartbeat"
+  become: true
+  become_user: "{{ d4cc_client_user }}"
+  environment:
+    HOME: "{{ d4cc_client_home }}"
+  register: d4cc_client_heartbeat
+  changed_when: false
+  failed_when: false
+  when: d4cc_client_send_test_heartbeat | bool
+
+- name: Warn when the dashboard is not reachable
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: heartbeat to {{ d4cc_client_url }} failed ({{ d4cc_client_heartbeat.stderr | default('') | trim }}).
+      The client is installed; it will report once the dashboard is reachable.
+  when: d4cc_client_send_test_heartbeat | bool and d4cc_client_heartbeat.rc != 0
+
+- name: Check whether Claude Code is logged in
+  ansible.builtin.stat:
+    path: "{{ d4cc_client_home }}/.claude/.credentials.json"
+  register: d4cc_client_credentials
+
+- name: Remind about the manual login
+  ansible.builtin.debug:
+    msg: >-
+      Claude Code is not logged in for {{ d4cc_client_user }} yet. Log in once interactively:
+      ssh to {{ inventory_hostname }} as {{ d4cc_client_user }}, run `claude` and follow the login.
+  when: not d4cc_client_credentials.stat.exists

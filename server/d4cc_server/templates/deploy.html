@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Deploy · Dash4ClCo{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand"><a href="/" class="home">Dash4ClCo</a> <span class="ver">v{{ version }}</span></div>
+  <a class="link" href="/" style="margin-left:auto">← Back to board</a>
+  <a class="link" href="/settings">Settings</a>
+  {% if auth %}<form method="post" action="/logout"><button class="link">Log out</button></form>{% endif %}
+</header>
+<main class="page">
+  <section class="panel">
+    <h2>Add a machine</h2>
+    <p class="muted">Registers the host, issues its token and downloads a ready-to-run Ansible bundle
+      (Claude Code + hooks + heartbeat). The token is only contained in this download.</p>
+    <form id="add-form" class="settings-form">
+      <div class="field"><label for="f-name">Host name</label>
+        <input id="f-name" name="name" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,62}" placeholder="ws5">
+        <span class="unit">name on the dashboard and in the inventory</span></div>
+      <div class="field"><label for="f-ansible_host">SSH address</label>
+        <input id="f-ansible_host" name="ansible_host" placeholder="10.8.0.15">
+        <span class="unit">empty = host name</span></div>
+      <div class="field"><label for="f-ansible_user">SSH user</label>
+        <input id="f-ansible_user" name="ansible_user" pattern="[a-z_][a-z0-9_.\-]{0,31}" placeholder="from ssh config">
+        <span class="unit">needs sudo on the host</span></div>
+      <div class="field"><label for="f-claude_user">Claude Code user</label>
+        <input id="f-claude_user" name="claude_user" pattern="[a-z_][a-z0-9_.\-]{0,31}" placeholder="= SSH user">
+        <span class="unit">account that runs Claude in tmux</span></div>
+      <div class="field"><label for="f-claude_version">Claude Code version</label>
+        <input id="f-claude_version" name="claude_version" value="latest" required
+               pattern="latest|stable|\d+\.\d+\.\d+" list="versions">
+        <span class="unit">latest, stable or exact (pins, disables auto-update)</span></div>
+      <div class="field"><label for="f-url">Dashboard URL</label>
+        <input id="f-url" name="url" type="url" required>
+        <span class="unit">as reachable from the host (VPN)</span></div>
+      <datalist id="versions"><option value="latest"><option value="stable"></datalist>
+      <div class="form-actions"><button type="submit" class="primary">Create host &amp; download bundle</button></div>
+    </form>
+    <p id="add-status" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Hosts</h2>
+      <a id="update-bundle" class="mini" href="/api/deploy/update-bundle" download>Download fleet update bundle</a>
+    </div>
+    <p class="muted">The fleet update bundle contains all active hosts but no tokens: it updates role, client and
+      Claude Code on machines that are already set up. “New bundle” issues a new token — the old one stops working.</p>
+    <table class="hosts-table">
+      <thead><tr><th>Host</th><th>Status</th><th>OS</th><th>Claude</th><th>Client</th><th>Target</th><th></th></tr></thead>
+      <tbody id="hosts"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Run a bundle</h2>
+    <pre class="code">tar xzf d4cc-&lt;host&gt;.tar.gz && cd d4cc-&lt;host&gt;
+ansible-playbook playbook.yml --ask-become-pass</pre>
+    <p class="muted">Afterwards log in to Claude Code once on the host (<code>claude</code>) — login is interactive.</p>
+  </section>
+</main>
+<script src="/static/deploy.js?v={{ version }}"></script>
+{% endblock %}
