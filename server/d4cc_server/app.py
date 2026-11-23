@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import __version__, board, db
 from .config import Config
+from .health import Health, InvalidHeartbeat
 from .hub import Hub
 from .ingest import Ingestor, InvalidEvent
 
@@ -29,11 +31,32 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     cfg.validate()
     conn = db.connect(cfg.db_path)
     ingestor = Ingestor(conn)
+    health = Health(conn, cfg)
     hub = Hub()
     templates = Jinja2Templates(directory=HERE / "templates")
 
-    app = FastAPI(title="Dash4ClCo", version=__version__, docs_url=None, redoc_url=None)
-    app.state.cfg, app.state.conn, app.state.hub = cfg, conn, hub
+    def check_health() -> None:
+        if health.reconcile(time.time()):
+            hub.publish("resync", None)
+
+    async def health_loop():
+        while True:
+            await asyncio.sleep(cfg.health_interval)
+            try:
+                check_health()
+            except Exception as exc:  # keep the loop alive
+                print(f"health check failed: {exc!r}")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        task = asyncio.create_task(health_loop())
+        try:
+            yield
+        finally:
+            task.cancel()
+
+    app = FastAPI(title="Dash4ClCo", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan)
+    app.state.cfg, app.state.conn, app.state.hub, app.state.health = cfg, conn, hub, health
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
     # -- auth ---------------------------------------------------------------
@@ -82,9 +105,25 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             data = board.get_session(conn, sid)
             if data:
                 hub.publish("session", data)
+        if touched:
+            check_health()
         if errors and len(errors) == len(events):
             return JSONResponse({"accepted": 0, "errors": errors}, status_code=400)
         return {"accepted": len(events) - len(errors), "errors": errors}
+
+    @app.post("/api/heartbeat", status_code=202)
+    async def heartbeat(request: Request, host=Depends(require_host)):
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(400, "invalid JSON")
+        try:
+            health.heartbeat(host["id"], payload, time.time())
+        except InvalidHeartbeat as exc:
+            raise HTTPException(400, str(exc))
+        hub.publish("host", board.get_host(conn, host["id"]))
+        check_health()
+        return {"ok": True}
 
     # -- read API -----------------------------------------------------------
 
@@ -95,7 +134,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/api/board", dependencies=[Depends(require_admin)])
     def api_board():
-        return board.board(conn, cfg.ended_visible)
+        return board.board(conn, cfg)
 
     @app.get("/api/stream", dependencies=[Depends(require_admin)])
     async def stream(request: Request):
@@ -124,7 +163,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get("/login", response_class=HTMLResponse)
     def login_form(request: Request):
-        return templates.TemplateResponse(request, "login.html", {"error": None})
+        return templates.TemplateResponse(request, "login.html", {"error": None, "version": __version__})
 
     @app.post("/login")
     def login(request: Request, token: str = Form(...)):
@@ -132,7 +171,8 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             resp = RedirectResponse("/", status_code=303)
             resp.set_cookie(COOKIE, cookie_value(), httponly=True, samesite="strict", max_age=30 * 86400)
             return resp
-        return templates.TemplateResponse(request, "login.html", {"error": "Invalid token"}, status_code=401)
+        return templates.TemplateResponse(request, "login.html", {"error": "Invalid token", "version": __version__},
+                                          status_code=401)
 
     @app.post("/logout")
     def logout():

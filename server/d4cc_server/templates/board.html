@@ -5,7 +5,7 @@
   <div class="summary" id="summary" aria-live="polite"></div>
   <nav class="filters" id="filters" aria-label="Filter sessions">
     <button data-filter="all" class="active">All</button>
-    <button data-filter="attention">Needs you</button>
+    <button data-filter="attention">Attention</button>
     <button data-filter="working">Working</button>
     <button data-filter="idle">Idle</button>
     <label class="toggle"><input type="checkbox" id="show-ended"> Show ended</label>
@@ -16,5 +16,5 @@
 <main id="board" class="board">
   <p class="empty">Loading…</p>
 </main>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ version }}"></script>
 {% endblock %}

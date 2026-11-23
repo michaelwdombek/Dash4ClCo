@@ -7,8 +7,9 @@ subagents, tmux pane, model and Claude Code version.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the full design and roadmap.
 
-**Status:** phase 1 (hook client, ingest, live board). Heartbeat/health checks,
-history UI, card actions, Ansible deployment and the podman quadlet follow.
+**Status:** phase 2 — hook client, live board, heartbeat and health alerts
+(stuck / dead / offline), version flags. History UI, card actions, Ansible
+deployment and the podman quadlet follow.
 
 ## Server (development)
 
@@ -30,6 +31,11 @@ Open `http://<host>:8787/` and sign in with the admin token.
 | `D4CC_AUTH_DISABLED` | `0` | `1` disables UI auth (local dev only) |
 | `D4CC_ENDED_VISIBLE_HOURS` | `24` | how long ended sessions stay on the board |
 | `D4CC_LISTEN` / `D4CC_PORT` | `0.0.0.0` / `8787` | bind address (use the VPN IP) |
+| `D4CC_STUCK_AFTER_MIN` | `30` | `working` without any event for this long → **stuck** |
+| `D4CC_OFFLINE_AFTER_MIN` | `15` | no heartbeat for this long → host **offline** |
+| `D4CC_DEAD_AFTER_HEARTBEATS` | `2` | session process missing from this many heartbeats → **dead** |
+| `D4CC_HEALTH_INTERVAL_S` | `30` | how often alerts are re-evaluated |
+| `D4CC_MIN_CLAUDE_VERSION` | – | reference version for "outdated" (default: newest seen in the fleet) |
 
 Host management: `d4cc-admin add-host | list-hosts | revoke-host | rotate-token`.
 
@@ -41,9 +47,12 @@ Requires `bash`, `curl`, `jq` (Linux, uses `/proc`).
 client/install.sh --url http://<dashboard>:8787 --token <host-token>
 ```
 
-This installs `d4cc-hook` to `~/.local/bin`, writes `~/.config/d4cc/client.env`
-(0600) and merges the hooks into `~/.claude/settings.json` (existing settings and
-hooks are kept; a backup is written once to `settings.json.d4cc-backup`).
+This installs `d4cc-hook` and `d4cc-heartbeat` to `~/.local/bin`, writes
+`~/.config/d4cc/client.env` (0600), merges the hooks into `~/.claude/settings.json`
+(existing settings and hooks are kept; a backup is written once to
+`settings.json.d4cc-backup`) and enables the `d4cc-heartbeat.timer` systemd user
+unit (every 60 s; `loginctl enable-linger` keeps it running without a login).
+`d4cc-heartbeat --print` shows what would be sent.
 New Claude Code sessions report automatically. Remove with `client/install.sh --uninstall`.
 
 Privacy: prompts, full commands and tool output are **not** sent. Cards show
@@ -53,6 +62,20 @@ to 200-character prompt excerpts.
 
 The hook never blocks Claude Code: it sends in the background with a 3 s
 timeout and always exits 0. If the dashboard is down, events are dropped.
+
+## Health alerts
+
+| Alert | Condition | Clears when |
+|---|---|---|
+| **stuck** | session `working`, no event for `D4CC_STUCK_AFTER_MIN` | any new event |
+| **dead** | host heartbeats arrive, but the session's claude PID is missing from 2 in a row and no `SessionEnd` came | process reappears or session ends |
+| **offline** | no heartbeat for `D4CC_OFFLINE_AFTER_MIN` (stuck/dead are suppressed meanwhile) | next heartbeat |
+
+Hosts that never sent a heartbeat (e.g. hook-only installs) are never marked offline.
+
+Version flags: a host is **outdated** if its installed Claude Code is older than
+the reference version; a session shows **restart pending** if it still runs an
+older binary than the one installed on its host.
 
 ## Tests
 

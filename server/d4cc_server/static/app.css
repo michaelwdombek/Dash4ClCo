@@ -42,7 +42,7 @@ button { font: inherit; color: inherit; }
 .brand { font-weight: 650; letter-spacing: .01em; }
 .brand .ver { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 4px; }
 .summary { display: flex; gap: 12px; font-variant-numeric: tabular-nums; }
-.sum { font-size: 13px; color: var(--muted); }
+.sum { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .sum::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
 .sum.needs_you::before { background: var(--needs); }
 .sum.working::before { background: var(--working); }
@@ -120,3 +120,36 @@ button { font: inherit; color: inherit; }
 .login-box input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
 .login-box button { padding: 8px; border: 0; border-radius: 6px; background: var(--working); color: #fff; cursor: pointer; font-weight: 600; }
 .error { color: var(--needs); margin: 0; font-size: 13px; }
+
+/* --- phase 2: health ------------------------------------------------------ */
+:root { --alert: #c92a2a; --offline: #868e96; }
+@media (prefers-color-scheme: dark) { :root { --alert: #ff6b6b; --offline: #6b717b; } }
+
+.sum.sum-alerts { color: var(--alert); font-weight: 600; }
+.sum.sum-alerts::before { background: var(--alert); }
+
+.host-head { flex-wrap: wrap; }
+.host-dot { width: 9px; height: 9px; border-radius: 50%; align-self: center; background: var(--offline); flex: none; }
+.host-dot.online { background: var(--ok); }
+.host-dot.offline { background: var(--alert); }
+.host.offline .host-head h2 { color: var(--alert); }
+.host-empty { margin: 0; color: var(--muted); font-size: 13px; }
+
+.alerts { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.alert {
+  font-size: 12.5px; padding: 5px 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--alert) 12%, transparent); color: var(--alert);
+  border: 1px solid color-mix(in srgb, var(--alert) 35%, transparent);
+}
+.alert-offline { --alert: var(--offline); }
+.alert.acked { opacity: .6; }
+.card.has-alert { box-shadow: 0 0 0 1px var(--alert); }
+.card.host-offline { opacity: .7; }
+.card.host-offline .badge::before { animation: none; }
+
+.flag {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  font-size: 10.5px; font-family: system-ui, sans-serif; font-weight: 600; vertical-align: 1px;
+}
+.flag-restart { background: color-mix(in srgb, var(--idle) 20%, transparent); color: var(--idle); }
+.flag-outdated { background: color-mix(in srgb, var(--needs) 18%, transparent); color: var(--needs); }

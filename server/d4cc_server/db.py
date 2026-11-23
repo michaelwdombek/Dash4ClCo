@@ -78,6 +78,24 @@ MIGRATIONS: list[str] = [
     CREATE INDEX events_session_ts ON events(session_id, ts);
     CREATE INDEX events_received ON events(received_at);
     """,
+    # 2 - heartbeat liveness + alerts
+    """
+    ALTER TABLE sessions ADD COLUMN missing_heartbeats INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE alerts (
+        id          INTEGER PRIMARY KEY,
+        kind        TEXT NOT NULL,          -- stuck | dead | offline
+        host_id     INTEGER NOT NULL REFERENCES hosts(id),
+        session_id  TEXT REFERENCES sessions(id),
+        opened_at   REAL NOT NULL,
+        acked_at    REAL,
+        note        TEXT,
+        resolved_at REAL,
+        resolution  TEXT                    -- auto | manual
+    );
+    CREATE INDEX alerts_open ON alerts(resolved_at);
+    CREATE INDEX alerts_session ON alerts(session_id);
+    """,
 ]
 
 

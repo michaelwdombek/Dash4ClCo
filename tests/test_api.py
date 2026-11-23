@@ -66,3 +66,23 @@ def test_ingest_publishes_to_hub(client, app, host_token):
                 json={"event": "UserPromptSubmit", "session_id": "s9", "ts": 1})
     kind, data = queue.get_nowait()
     assert kind == "session" and data["id"] == "s9" and data["state"] == "working"
+
+
+def test_heartbeat_endpoint(client, host_token):
+    auth = {"Authorization": f"Bearer {host_token}"}
+    assert client.post("/api/heartbeat", json={"processes": []}).status_code == 401
+    assert client.post("/api/heartbeat", headers=auth, json={"processes": "x"}).status_code == 400
+    r = client.post("/api/heartbeat", headers=auth, json={
+        "claude_installed_version": "2.1.330", "os_family": "redhat",
+        "processes": [{"pid": 42, "tmux_pane": "%1", "cwd": "/p", "version": "2.1.330"}]})
+    assert r.status_code == 202
+    login(client)
+    h = client.get("/api/board").json()["hosts"][0]
+    assert h["os_family"] == "redhat" and h["processes"] == 1 and h["last_heartbeat_at"]
+
+
+def test_heartbeat_publishes_host(client, app, host_token):
+    queue = app.state.hub.subscribe()
+    client.post("/api/heartbeat", headers={"Authorization": f"Bearer {host_token}"}, json={"processes": []})
+    kind, data = queue.get_nowait()
+    assert kind == "host" and data["name"] == "ws1"

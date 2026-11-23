@@ -22,9 +22,13 @@ class Config:
     auth_disabled: bool = False
     # How long ended sessions stay visible on the board (seconds).
     ended_visible: float = 24 * 3600
-    # Health thresholds (seconds) - evaluated from phase 2 on.
+    # Health thresholds (seconds / counts)
     stuck_after: float = 30 * 60
     offline_after: float = 15 * 60
+    dead_after_heartbeats: int = 2
+    health_interval: float = 30
+    # Reference Claude Code version; default = newest version seen in the fleet.
+    min_claude_version: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -35,6 +39,9 @@ class Config:
             ended_visible=float(_env("D4CC_ENDED_VISIBLE_HOURS", "24")) * 3600,
             stuck_after=_minutes("D4CC_STUCK_AFTER_MIN", 30),
             offline_after=_minutes("D4CC_OFFLINE_AFTER_MIN", 15),
+            dead_after_heartbeats=int(_env("D4CC_DEAD_AFTER_HEARTBEATS", "2")),
+            health_interval=float(_env("D4CC_HEALTH_INTERVAL_S", "30")),
+            min_claude_version=_env("D4CC_MIN_CLAUDE_VERSION"),
         )
 
     def validate(self) -> None:

@@ -115,7 +115,7 @@ def test_hook_replays_fixture_to_board(server):
     assert s["tmux_pane"] == "%7"
     assert s["subagents"][0]["agent_type"] == "Explore"
     assert s["subagents"][0]["description"] == "List files in cwd"
-    assert board["hosts"][0]["client_version"] == "0.1.0"
+    assert board["hosts"][0]["client_version"] == "0.2.0"
 
 
 def test_hook_privacy_no_prompt_or_command_text(server):
@@ -162,3 +162,32 @@ def test_hook_async_mode_delivers(server):
         time.sleep(0.1)
     else:
         pytest.fail("async event never arrived")
+
+
+HEARTBEAT = ROOT / "client" / "d4cc-heartbeat"
+
+
+def test_heartbeat_print_mode(tmp_path):
+    r = subprocess.run([str(HEARTBEAT), "--print"], env={"PATH": os.environ["PATH"], "HOME": str(tmp_path),
+                       "D4CC_CONFIG": "/dev/null"}, capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["client_version"] == "0.2.0"
+    assert isinstance(data["processes"], list)
+    assert all(isinstance(p["pid"], int) for p in data["processes"])
+
+
+def test_heartbeat_reaches_server(server):
+    conf = server["tmp"] / "client.env"
+    conf.write_text(f"D4CC_URL={server['url']}\nD4CC_TOKEN={server['token']}\n")
+    r = subprocess.run([str(HEARTBEAT)], env={"PATH": os.environ["PATH"], "HOME": str(server["tmp"]),
+                       "D4CC_CONFIG": str(conf)}, capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    host = admin_client(server).get("/api/board").json()["hosts"][0]
+    assert host["last_heartbeat_at"] and host["os_family"]
+
+
+def test_heartbeat_fails_loudly_without_config(tmp_path):
+    r = subprocess.run([str(HEARTBEAT)], env={"PATH": os.environ["PATH"], "HOME": str(tmp_path)},
+                       capture_output=True, text=True, timeout=20)
+    assert r.returncode == 1 and "not configured" in r.stderr

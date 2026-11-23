@@ -141,7 +141,8 @@ class Ingestor:
     def _handle(self, s: sqlite3.Row, etype: str, ev: dict, ts: float, now: float, result: Result) -> None:
         sid = s["id"]
         fresh = ts >= (s["last_client_ts"] or 0)
-        upd: dict = {"last_event_at": now}
+        # Any event proves the session's process is alive.
+        upd: dict = {"last_event_at": now, "missing_heartbeats": 0}
         if fresh:
             upd["last_client_ts"] = ts
         for key in SESSION_META:

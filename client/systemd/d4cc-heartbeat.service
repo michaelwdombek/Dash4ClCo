@@ -1,0 +1,8 @@
+[Unit]
+Description=Dash4ClCo heartbeat (reports running Claude Code sessions)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/d4cc-heartbeat
+TimeoutStartSec=30

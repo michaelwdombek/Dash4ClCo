@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# d4cc-heartbeat
+#
+# Reports host liveness to the Dash4ClCo dashboard: installed Claude Code
+# version, OS family and the list of running Claude processes (PID, tmux pane,
+# cwd, running version). Run every 60 s by the d4cc-heartbeat.timer user unit.
+#
+# Config (sourced): ${D4CC_CONFIG:-~/.config/d4cc/client.env}  (D4CC_URL, D4CC_TOKEN)
+# Options: --print  print the payload instead of sending it
+
+D4CC_CLIENT_VERSION="0.2.0"
+
+conf="${D4CC_CONFIG:-$HOME/.config/d4cc/client.env}"
+# shellcheck source=/dev/null
+[ -r "$conf" ] && . "$conf"
+print_only=0
+[ "${1:-}" = "--print" ] && print_only=1
+if [ "$print_only" = 0 ]; then
+  [ -n "${D4CC_URL:-}" ] && [ -n "${D4CC_TOKEN:-}" ] || { echo "d4cc-heartbeat: D4CC_URL/D4CC_TOKEN not configured in $conf" >&2; exit 1; }
+fi
+command -v jq >/dev/null || { echo "d4cc-heartbeat: jq missing" >&2; exit 1; }
+
+# systemd user units start with a minimal PATH
+PATH="$HOME/.local/bin:$PATH"
+
+os_family() {
+  local id="" like=""
+  if [ -r /etc/os-release ]; then
+    id=$(. /etc/os-release; echo "${ID:-}")
+    like=$(. /etc/os-release; echo "${ID_LIKE:-}")
+  fi
+  case " $id $like " in
+    *" debian "*|*" ubuntu "*) echo debian ;;
+    *" rhel "*|*" fedora "*|*" centos "*) echo redhat ;;
+    *) echo "${id:-unknown}" ;;
+  esac
+}
+
+running_version() {
+  local exe
+  exe=$(readlink "/proc/$1/exe" 2>/dev/null)
+  exe=${exe% (deleted)}
+  case "$exe" in */claude/versions/*) echo "${exe##*/}" ;; esac
+}
+
+# pane_pid -> pane_id map for the user's default tmux server
+declare -A pane_of=()
+if command -v tmux >/dev/null 2>&1; then
+  while read -r pane_id pane_pid; do
+    [ -n "$pane_pid" ] && pane_of[$pane_pid]=$pane_id
+  done < <(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null)
+fi
+
+pane_for_pid() {
+  local pid=$1 stat i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 0
+    if [ -n "${pane_of[$pid]:-}" ]; then echo "${pane_of[$pid]}"; return 0; fi
+    stat=$(cat "/proc/$pid/stat" 2>/dev/null) || return 0
+    stat=${stat##*) }
+    set -- $stat
+    pid=$2
+  done
+}
+
+# Claude processes of this user: native binary "claude", or node running claude.
+claude_pids() {
+  local pid comm
+  for pid in $(pgrep -u "$(id -u)" -x claude 2>/dev/null; pgrep -u "$(id -u)" -x node 2>/dev/null); do
+    comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+    if [ "$comm" = node ]; then
+      tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q 'claude' || continue
+    fi
+    echo "$pid"
+  done
+}
+
+procs="[]"
+for pid in $(claude_pids); do
+  procs=$(jq -c --argjson pid "$pid" --arg pane "$(pane_for_pid "$pid")" \
+    --arg cwd "$(readlink "/proc/$pid/cwd" 2>/dev/null)" --arg ver "$(running_version "$pid")" \
+    '. + [{pid: $pid, tmux_pane: $pane, cwd: $cwd, version: $ver} | with_entries(select(.value != ""))]' <<<"$procs")
+done
+
+installed=$(timeout 5 claude --version 2>/dev/null | awk '{print $1}')
+uptime_s=$(cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1)
+
+payload=$(jq -nc \
+  --arg hostname "${HOSTNAME:-$(uname -n)}" --arg cv "$D4CC_CLIENT_VERSION" \
+  --arg os "$(os_family)" --arg installed "$installed" --arg uptime "${uptime_s:-0}" \
+  --arg ts "$(date +%s.%N)" --argjson procs "$procs" '
+  {v: 1, ts: ($ts | tonumber), hostname: $hostname, client_version: $cv, os_family: $os,
+   claude_installed_version: $installed, uptime_s: ($uptime | tonumber), processes: $procs}
+  | with_entries(select(.value != ""))')
+
+if [ "$print_only" = 1 ]; then
+  echo "$payload" | jq .
+  exit 0
+fi
+
+printf '%s' "$payload" | curl -fsS -m 10 -X POST \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$D4CC_TOKEN") \
+  -H 'Content-Type: application/json' --data-binary @- \
+  "${D4CC_URL%/}/api/heartbeat" >/dev/null

@@ -232,7 +232,20 @@ acknowledged with a note, which is kept in history.
 4. **Deployment:** host/token management, Ansible role (apt + dnf), bundle generator.
 5. **Packaging:** Containerfile, quadlet, docs; end-to-end test in a container.
 
+## Implementation notes (phase 2)
+
+- Alerts are reconciled, not event-driven: the evaluator computes the set of
+  conditions that hold now, opens missing alerts and auto-resolves cleared ones.
+  Runs after each ingest / heartbeat and every `D4CC_HEALTH_INTERVAL_S`.
+- While a host is offline, its stuck/dead alerts are suppressed (the cause is
+  the host, not the session); its cards show "host offline — state unknown".
+- tmux pane ids (`%N`) are unique only for the lifetime of a tmux server. After
+  a tmux server restart ids are reused; a new session in a reused pane ends the
+  old (necessarily dead) session as `replaced`. Observed in the phase 2 live test.
+- Version flags are computed in the browser (live updates deliver single
+  sessions/hosts); the server only provides `D4CC_MIN_CLAUDE_VERSION`.
+
 ## Open points
 
-- Sessions killed together with their tmux pane do not send `SessionEnd`
-  (observed in the phase 1 live test) — covered by the phase 2 heartbeat.
+- Acknowledging alerts / "working on it" markers (phase 3, `alerts.acked_at`
+  and `note` columns already exist).
