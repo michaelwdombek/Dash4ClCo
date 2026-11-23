@@ -1,11 +1,12 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "d4cc-server"
 version = "0.5.0"
 description = "Dash4ClCo - dashboard for Claude Code sessions across workstations"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
