@@ -75,6 +75,10 @@ Notes:
   `host, session_id, event, ts, cwd, tmux_pane, tmux_session, claude_pid,
   source/reason, tool_name, tool_summary, tool_use_id, agent_id, agent_type,
   notification_type, background_task_count, claude_version`.
+- `claude_version` = version of the **running** process: resolved from
+  `/proc/<claude_pid>/exe` (native installer → `.../claude/versions/<ver>`);
+  fallback `claude --version` (npm installs). Cached per PID so it costs nothing
+  per event.
 - **Privacy:** never sends full `prompt`, `tool_input` or `tool_response`.
   `tool_summary` is a short, truncated hint (Bash `description`, file path for
   Read/Edit/Write, subagent `description`). Prompt excerpts are opt-in
@@ -85,8 +89,9 @@ Notes:
 - Dependencies: `bash`, `curl`, `jq`.
 
 ### `d4cc-heartbeat` (systemd user timer, every 60 s)
-- Sends: host, client version, uptime, and the list of live Claude processes
-  (PID, tmux pane, cwd) from `ps` + `tmux list-panes -a`.
+- Sends: host, client version, OS family, uptime, **installed Claude Code version**
+  (`claude --version`), and the list of live Claude processes (PID, tmux pane,
+  cwd, running version) from `ps` + `tmux list-panes -a`.
 - Lets the server tell "idle but alive" from "died without SessionEnd" from "host offline".
 
 ### Settings integration
@@ -106,8 +111,8 @@ Notes:
 ### Data model (SQLite)
 
 - `hosts` — id, name, token_hash, created_at, revoked_at, last_heartbeat_at,
-  client_version, os_family, last_heartbeat (JSON)
-- `sessions` — id (session_id), host_id, tmux_pane, cwd, claude_pid, started_at,
+  client_version, claude_installed_version, os_family, last_heartbeat (JSON)
+- `sessions` — id (session_id), host_id, tmux_pane, cwd, claude_pid, claude_version, started_at,
   last_event_at, state, current_activity, ended_at, end_reason, replaced_by,
   archived_at
 - `subagents` — agent_id, session_id, agent_type, description, started_at, ended_at
@@ -150,6 +155,17 @@ archived sessions too.
 | no heartbeat for > `D4CC_OFFLINE_AFTER` | alert **offline** on host; its cards shown as "unknown" | 15 min |
 | `needs_you` for > `D4CC_NEEDS_YOU_HIGHLIGHT` | escalate highlight | 10 min |
 
+### Version tracking
+
+- Every card shows the Claude Code version that session runs; every host shows
+  the installed version.
+- Reference version = newest version seen anywhere in the fleet (no external
+  calls), optionally overridden by `D4CC_MIN_CLAUDE_VERSION`.
+- Flags (badge, no alert): host **outdated** (installed < reference), session
+  **restart pending** (running < installed on its host, i.e. updated on disk
+  but the session still runs the old binary).
+- Hosts page has a fleet version overview (version → hosts / sessions).
+
 Offline default (15 min) intentionally exceeds the ~10 min VPN gateway restart.
 Alerts auto-resolve when the condition clears (e.g. host comes back), unless
 acknowledged with a note, which is kept in history.
@@ -176,8 +192,10 @@ acknowledged with a note, which is kept in history.
    - the `d4cc_client` role (same version as the server), `README.md`.
 4. Role `d4cc_client` (supports apt **and** dnf families):
    - packages: `curl`, `jq`, `tmux`, `procps`
-   - installs Claude Code via the official native installer for the target user
-     (skips if present; optional pinned version)
+   - installs Claude Code via the official native installer for the target user:
+     latest by default; `d4cc_claude_version` (also a field in the "Add machine"
+     form) pins a specific version. Re-running with a newer/other version
+     updates an existing install.
    - installs `d4cc-hook`, `d4cc-heartbeat`, `client.env` (0600)
    - merges hooks into `~/.claude/settings.json`
    - enables the heartbeat systemd user timer (+ `loginctl enable-linger`)
@@ -193,7 +211,8 @@ acknowledged with a note, which is kept in history.
   admin token + thresholds, `PublishPort` bound to the VPN IP, auto-update label,
   healthcheck on `/healthz`.
 - Rootless (`~/.config/containers/systemd/`) or rootful (`/etc/containers/systemd/`).
-- TLS: either a reverse proxy in front, or plain HTTP on the VPN only (documented choice).
+- TLS: not required — plain HTTP bound to the VPN interface. A reverse proxy
+  with TLS can be put in front optionally (documented, not built in).
 
 ## Build phases
 
@@ -205,5 +224,4 @@ acknowledged with a note, which is kept in history.
 
 ## Open points
 
-- TLS strategy for the dashboard (reverse proxy vs. VPN-only HTTP).
-- Pin Claude Code version in the role or always install latest.
+- Verify `Notification` payload (permission prompt) in an interactive tmux session.
